@@ -7,8 +7,9 @@ import "./interfaces/IParachainStaking.sol";
 contract GLMRDelegator is TokenSaver {
     bytes32 public constant DEPOSITOR_ROLE = keccak256("DEPOSITOR_ROLE");
     bytes32 public constant ASSETS_MANAGER_ROLE = keccak256("ASSETS_MANAGER_ROLE");
+    bytes32 public constant REWARD_COLLECTOR_ROLE = keccak256("REWARD_COLLECTOR_ROLE");
 
-    address public stakingDelegations;
+    address public immutable stakingDelegations;
 
     mapping(address => uint256) public delegations;
     mapping(address => address) private _nextCandidates;
@@ -25,6 +26,7 @@ contract GLMRDelegator is TokenSaver {
     event DelegationReduced(address indexed candidate, uint256 reduced);
     event TotalDelegatedUpdated(uint256 totalDelegated);
     event TotalPendingUpdated(uint256 totalPending);
+    event RewardsHarvested(address receiver, uint256 amount);
 
     constructor(address _stakingDelegations) {
         require(_stakingDelegations != address(0), "GLMRDelegator.constructor: stakingDelegations cannot be zero address");
@@ -43,7 +45,7 @@ contract GLMRDelegator is TokenSaver {
         require(_amount > 0, "GLMRDelegator.runDelegate: cannot delegate 0 amount");
         require(balances() >= _amount, "GLMRDelegator.runDelegate: no enought GLMRs");
 
-        if (candidateExist(_candidate) && delegations[_candidate] > 0) {
+        if (candidateExist(_candidate)) {
             _delegatorBondMore(_candidate, _amount);
             _increaseDelegation(_candidate, _amount);
         } else {
@@ -68,7 +70,7 @@ contract GLMRDelegator is TokenSaver {
 
             address candidate = candidateLists[i];
             uint256 delegatedAmount = delegations[candidate];
-            uint256 withdrawableAmount = delegatedAmount - minDelegation();
+            uint256 withdrawableAmount = delegatedAmount > minDelegation() ? delegatedAmount - minDelegation() : 0;
             uint256 amount;
             if (withdrawableAmount == 0) {
                 continue;
@@ -98,7 +100,7 @@ contract GLMRDelegator is TokenSaver {
         require(candidateExist(_candidate), "GLMRDelegator.runSingleScheduleWithdraw: candidate not in the delegation list");
         
         uint256 delegatedAmount = delegations[_candidate];
-        uint256 withdrawableAmount = delegatedAmount - minDelegation();
+        uint256 withdrawableAmount = delegatedAmount > minDelegation() ? delegatedAmount - minDelegation() : 0;
         require(withdrawableAmount > 0, "GLMRDelegator.runSingleScheduleWithdraw: cannot withdraw below minimun delegation");
         require(withdrawableAmount >= _amount, "GLMRDelegator.runSingleScheduleWithdraw: not enought delegated amount");
 
@@ -172,10 +174,12 @@ contract GLMRDelegator is TokenSaver {
         emit TotalPendingUpdated(totalPending);
     }
 
-    function harvest(address _receiver) external onlyAssetsManager {
+    function harvest(address _receiver) external onlyRewardCollector {
+        require(_receiver != address(0), "GLMRDelegator.harvest: receiver cannot be zero address");
         uint256 harvestAmount = availabeToHarvest();
         (bool success, ) = _receiver.call{value: harvestAmount}("");
 		require(success, "GLMRDelegator.harvest: Transfer failed.");
+        emit RewardsHarvested(_receiver, harvestAmount);
     }
 
     function availabeToHarvest() public view returns(uint256) {
@@ -202,6 +206,13 @@ contract GLMRDelegator is TokenSaver {
         require(
             hasRole(ASSETS_MANAGER_ROLE, msg.sender), 
             "GLMRDelegator.onlyAssetsManager: permission denied");
+        _;
+    }
+
+    modifier onlyRewardCollector() {
+        require(
+            hasRole(REWARD_COLLECTOR_ROLE, msg.sender), 
+            "GLMRDelegator.onlyRewardCollector: permission denied");
         _;
     }
 
@@ -344,5 +355,18 @@ contract GLMRDelegator is TokenSaver {
     function cancelDelegationRequest(address _candidate) external onlyAssetsManager {
         require(_candidate != address(0), "GLMRDelegator.cancelDelegationRequest: candidate cannot be zero address");
         IParachainStaking(stakingDelegations).cancel_delegation_request(_candidate);
+    }
+
+    function scheduleLeaveDelegators() public onlyAssetsManager {
+        IParachainStaking(stakingDelegations).schedule_leave_delegators();
+    }
+
+    function executeLeaveDelegators() public onlyAssetsManager {
+        uint256 delegatorDelegationCount = IParachainStaking(stakingDelegations).delegator_delegation_count(address(this));
+        IParachainStaking(stakingDelegations).execute_leave_delegators(address(this), delegatorDelegationCount);
+    }
+
+    function cancelLeaveDelegators() public onlyAssetsManager {
+        IParachainStaking(stakingDelegations).cancel_leave_delegators();
     }
 }

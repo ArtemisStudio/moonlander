@@ -12,10 +12,9 @@ import "./interfaces/ITimeLockPool.sol";
 contract GLMRDepositor is TokenSaver, ReentrancyGuard {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
+    address public immutable sGLMR;
     address public glmrDelegator;
-    address public sGLMR;
     address public sGLMRStaking;
-
     uint64 public exitDuration;
 
     uint256 public totalDeposited;
@@ -28,37 +27,56 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         uint64 end;
     }
 
-    event GLMRDelegatorSet(address glmrDelegator);
+    event GLMRDelegatorUpdated(address glmrDelegator);
     event SGLMRSet(address sGLMR);
-    event SGLMRStakingSet(address sGLMRStaking);
+    event SGLMRStakingUpdated(address sGLMRStaking);
     event ExitDurationUpdated(uint64 exitDuration);
     event Deposited(address indexed account, uint256 amount);
     event WithdrawScheduled(address indexed account, uint256 amount, uint64 start, uint64 end);
     event Withdrawn(uint256 indexed depositId, address indexed receiver, address indexed from, uint256 amount);
 
     constructor(address _glmrDelegator, address _sGLMR, address _sGLMRStaking, uint64 _exitDuration) {
-        require(_glmrDelegator != address(0), "GLMRDepositor.constructor: glmrDelegator cannot be zero address");
         require(_sGLMR != address(0), "GLMRDepositor.constructor: sGLMR cannot be zero address");
+        require(_glmrDelegator != address(0), "GLMRDepositor.constructor: glmrDelegator cannot be zero address");
         require(_sGLMRStaking != address(0), "GLMRDepositor.constructor: sGLMRStaking cannot be zero address");
 
-        glmrDelegator = _glmrDelegator;
         sGLMR = _sGLMR;
+        glmrDelegator = _glmrDelegator;
         sGLMRStaking = _sGLMRStaking;
         exitDuration = _exitDuration;
 
-        ISGLMR(_sGLMR).approve(sGLMRStaking, type(uint256).max);
+        ISGLMR(_sGLMR).approve(_sGLMRStaking, type(uint256).max);
 
         _setupRole(ADMIN_ROLE, msg.sender);
 
-        emit GLMRDelegatorSet(_glmrDelegator);
         emit SGLMRSet(_sGLMR);
-        emit SGLMRStakingSet(_sGLMRStaking);
+        emit GLMRDelegatorUpdated(_glmrDelegator);
+        emit SGLMRStakingUpdated(_sGLMRStaking);
         emit ExitDurationUpdated(_exitDuration);
     }
 
     modifier onlyAdmin() {
         require(hasRole(ADMIN_ROLE, msg.sender), "GLMRDepositor.onlyAdmin: permission denied");
         _;
+    }
+    
+    function updateGLMRDelegator(address _newGLMRDelegator) external onlyAdmin {
+        require(_newGLMRDelegator != address(0), "GLMRDepositor.constructor: glmrDelegator cannot be zero address");
+        glmrDelegator = _newGLMRDelegator;
+        emit GLMRDelegatorUpdated(_newGLMRDelegator);
+    }
+
+    function updateSGLMRStaking(address _newSGLMRStaking) external onlyAdmin {
+        require(_newSGLMRStaking != address(0), "GLMRDepositor.constructor: sGLMRStaking cannot be zero address");
+        ISGLMR(sGLMR).approve(sGLMRStaking, 0);
+        sGLMRStaking = _newSGLMRStaking;
+        ISGLMR(sGLMR).approve(_newSGLMRStaking, type(uint256).max);
+        emit SGLMRStakingUpdated(_newSGLMRStaking);
+    }
+
+    function updateExitDuration(uint64 _newExitDuration) external onlyAdmin {
+        exitDuration = _newExitDuration;
+        emit ExitDurationUpdated(_newExitDuration);
     }
 
     function delegate(address _candidate, uint256 _amount) external onlyAdmin {

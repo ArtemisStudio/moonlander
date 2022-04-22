@@ -921,5 +921,52 @@ describe("GLMRDelegator", function () {
       })
 
     })
+
+    context("harvest", function() {
+      beforeEach(async () => {
+        let rewardCollectorRole = await glmrDelegator.REWARD_COLLECTOR_ROLE();
+        await glmrDelegator.connect(owner).grantRole(rewardCollectorRole, player1.address);
+      })
+
+      it("cannot run harvest if not reward collector", async function() {
+        await expect(glmrDelegator.connect(player2).harvest(player2.address)).to.be.revertedWith(
+          "GLMRDelegator.onlyRewardCollector: permission denied"
+          );
+      })
+
+      it("cannot harvest for zero receiver address", async function() {
+        await expect(glmrDelegator.connect(player1).harvest(ZERO_ADDRESS)).to.be.revertedWith(
+          "GLMRDelegator.harvest: receiver cannot be zero address"
+          );
+      })
+
+      it("can successfully harvest", async function() {
+        let harvestAmount = ethers.utils.parseEther("8.0")
+        await owner.sendTransaction({
+          to: glmrDelegator.address,
+          value: harvestAmount
+        });
+
+        expect(await glmrDelegator.availabeToHarvest()).to.be.equal(harvestAmount);
+
+        let beforeBal = await ethers.provider.getBalance(player2.address);
+        await glmrDelegator.connect(player1).harvest(player2.address);
+        let afterBal = await ethers.provider.getBalance(player2.address);
+        
+        expect(afterBal.sub(beforeBal)).to.be.equal(harvestAmount);
+      })
+
+      it("can emit RewardsHarvested event", async function() {
+        let harvestAmount = ethers.utils.parseEther("8.0")
+        await owner.sendTransaction({
+          to: glmrDelegator.address,
+          value: harvestAmount
+        });
+
+        await expect(glmrDelegator.connect(player1).harvest(player1.address))
+          .to.emit(glmrDelegator, 'RewardsHarvested')
+          .withArgs(player1.address, harvestAmount);
+      })
+    })
   })
 });

@@ -3,7 +3,13 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 describe("GLMRDepositor", function () {
   let owner;
+  let candidate1;
+  let candidate2;
+  let candidate3;
   let player1;
+  let player2;
+  let newGLMRDelegator;
+  let newSGLMRStaking;
 
   let MockParachainStakingFactory;
   let MockGLMRDelegatorFactory;
@@ -18,6 +24,7 @@ describe("GLMRDepositor", function () {
   let sGLMR;
   let EXIT_DURATION = 600;
   let MIN_DELEGATION = "5000000000000000000";
+  let NEW_EXIT_DURATION = 1200;
 
   before(async () => {
     MockParachainStakingFactory = await ethers.getContractFactory("MockParachainStaking");
@@ -28,7 +35,7 @@ describe("GLMRDepositor", function () {
   });
 
   beforeEach(async () => {
-    [owner, candidate1, candidate2, candidate3, player1, player2] = await ethers.getSigners();
+    [owner, candidate1, candidate2, candidate3, player1, player2, newGLMRDelegator, newSGLMRStaking] = await ethers.getSigners();
 
     parachainStaking = await MockParachainStakingFactory.connect(owner).deploy();
     sGLMR = await SGLMRFactory.connect(owner).deploy();
@@ -62,6 +69,60 @@ describe("GLMRDepositor", function () {
         "GLMRDepositor.constructor: sGLMRStaking cannot be zero address"
         );
     });
+  })
+
+  describe("updateGLMRDelegator", function() {
+    it("Cannot updateGLMRDelegator if not admin", async function () {
+      await expect(glmrDepositor.connect(player1).updateGLMRDelegator(newGLMRDelegator.address)).to.be.revertedWith(
+        "GLMRDepositor.onlyAdmin: permission denied"
+      );
+    })
+
+    it("Cannot updateGLMRDelegator to zero address", async function () {
+      await expect(glmrDepositor.connect(owner).updateGLMRDelegator(ZERO_ADDRESS)).to.be.revertedWith(
+        "GLMRDepositor.constructor: glmrDelegator cannot be zero address"
+      );
+    })
+
+    it("Can successfully update GLMRDelegator", async function () {
+      expect(await glmrDepositor.glmrDelegator()).to.be.equal(glmrDelegator.address);
+      await glmrDepositor.connect(owner).updateGLMRDelegator(newGLMRDelegator.address);
+      expect(await glmrDepositor.glmrDelegator()).to.be.equal(newGLMRDelegator.address);
+    })
+  })
+
+  describe("updateSGLMRStaking", function() {
+    it("Cannot updateSGLMRStaking if not admin", async function () {
+      await expect(glmrDepositor.connect(player1).updateSGLMRStaking(newSGLMRStaking.address)).to.be.revertedWith(
+        "GLMRDepositor.onlyAdmin: permission denied"
+      );
+    })
+
+    it("Cannot updateSGLMRStaking to zero address", async function () {
+      await expect(glmrDepositor.connect(owner).updateSGLMRStaking(ZERO_ADDRESS)).to.be.revertedWith(
+        "GLMRDepositor.constructor: sGLMRStaking cannot be zero address"
+      );
+    })
+
+    it("Can successfully update sGLMRStaking", async function () {
+      expect(await glmrDepositor.sGLMRStaking()).to.be.equal(sGLMRStaking.address);
+      await glmrDepositor.connect(owner).updateSGLMRStaking(newSGLMRStaking.address);
+      expect(await glmrDepositor.sGLMRStaking()).to.be.equal(newSGLMRStaking.address);
+    })
+  })
+
+  describe("updateExitDuration", function() {
+    it("Cannot updateExitDuration if not admin", async function () {
+      await expect(glmrDepositor.connect(player1).updateExitDuration(NEW_EXIT_DURATION)).to.be.revertedWith(
+        "GLMRDepositor.onlyAdmin: permission denied"
+      );
+    })
+
+    it("Can successfully update exit duration", async function () {
+      expect(await glmrDepositor.exitDuration()).to.be.equal(EXIT_DURATION);
+      await glmrDepositor.connect(owner).updateExitDuration(NEW_EXIT_DURATION);
+      expect(await glmrDepositor.exitDuration()).to.be.equal(NEW_EXIT_DURATION);
+    })
   })
 
   describe("Deposit", function() {

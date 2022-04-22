@@ -14,4 +14,8 @@ contract MockSGLMRStaking is ITimeLockPool {
     function deposit(uint256 _amount, uint256 _duration, address _receiver) public {
         ISGLMR(sGLMR).transferFrom(msg.sender, address(this), _amount);
     }
+
+    function distributeRewards(address _reward, uint256 _amount) public {
+        ISGLMR(_reward).transferFrom(msg.sender, address(this), _amount);
+    }
 }
