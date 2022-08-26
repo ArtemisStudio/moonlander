@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.12;
 
-import "../GLMRDelegator.sol";
+import "../core/GLMRDelegator.sol";
 
 contract MockGLMRDelegator is GLMRDelegator {
 

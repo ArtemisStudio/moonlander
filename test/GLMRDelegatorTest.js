@@ -23,7 +23,6 @@ describe("GLMRDelegator", function () {
     glmrDelegator = await MockGLMRDelegatorFactory.connect(owner).deploy(parachainStaking.address);
     await parachainStaking.connect(owner).setGLMRDelegator(glmrDelegator.address);
 
-    expect(await glmrDelegator.hasRole(await glmrDelegator.ASSETS_MANAGER_ROLE(), owner.address)).to.be.equal(true);
     expect(await glmrDelegator.stakingDelegations()).to.be.equal(parachainStaking.address);
   });
 
@@ -263,7 +262,7 @@ describe("GLMRDelegator", function () {
         });
 
         await expect(glmrDelegator.connect(player1).runDelegate(candidate1.address, "6000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.runDelegate: no enought GLMRs"
+          "GLMRDelegator.runDelegate: no enough GLMRs"
           );
       })
 
@@ -322,7 +321,7 @@ describe("GLMRDelegator", function () {
         expect(afterBal.sub(beforeBal)).to.be.equal(increasedDelegationAmount);
       })
 
-      it("can emit correct event", async function() {
+      it("can emit correct event for a new candidate", async function() {
         let delegationAmount = ethers.utils.parseEther("8.0")
         await owner.sendTransaction({
           to: glmrDelegator.address,
@@ -331,595 +330,452 @@ describe("GLMRDelegator", function () {
 
         await expect(await glmrDelegator.connect(player1).runDelegate(candidate2.address, delegationAmount))
           .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(delegationAmount);
-      })
-    })
-
-    context("runScheduleWithdraw", function() {
-      beforeEach(async () => {
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+            .withArgs(delegationAmount)
+          .to.emit(glmrDelegator, 'DelegatorDelegated')
+            .withArgs(candidate2.address, delegationAmount)
+          .to.emit(glmrDelegator, 'CandidateAdded')
+            .withArgs(candidate2.address, delegationAmount);
       })
 
-      it("cannot runScheduleWithdraw if not depositor or assets manager", async function() {
-        await expect(glmrDelegator.connect(player2).runScheduleWithdraw("3000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.onlyDepositorOrAssetsManager: permission denied"
-          );
-      })
+      it("can emit correct event for an existing candidate", async function() {
+        let initialDelegationAmount = ethers.utils.parseEther("5.0")
+        let increasedDelegationAmount = ethers.utils.parseEther("2.0")
 
-      it("cannot runScheduleWithdraw for zero amount", async function() {
-        await expect(glmrDelegator.connect(owner).runScheduleWithdraw(0)).to.be.revertedWith(
-          "GLMRDelegator.runScheduleWithdraw: cannot schedule withdraw 0 amount"
-          );
-      })
-
-      it("cannot runScheduleWithdraw when no enough GLMRs are delegated", async function() {
-        await expect(glmrDelegator.connect(owner).runScheduleWithdraw("1000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.runScheduleWithdraw: not enough GLMR delegated for withdraw"
-          );
-      })
-
-      it("cannot runScheduleWithdraw when no enough GLMRs are withdrawable (due to min delegation)", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
         await owner.sendTransaction({
           to: glmrDelegator.address,
-          value: delegationAmount
+          value: initialDelegationAmount.add(increasedDelegationAmount)
         });
+        await glmrDelegator.connect(player1).runDelegate(candidate1.address, initialDelegationAmount);
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        await expect(glmrDelegator.connect(owner).runScheduleWithdraw(delegationAmount)).to.be.revertedWith(
-          "GLMRDelegator.runScheduleWithdraw: not enough GLMR to schedule withdraw"
-          );
-      })
-
-      it("can runScheduleWithdraw as a depositor", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-        await glmrDelegator.connect(player1).runScheduleWithdraw(withdrawAmount);
-
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await parachainStaking.totalAmountScheduled()).to.be.equal(withdrawAmount);
-      })
-
-      it("can runScheduleWithdraw from a single candidate", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await parachainStaking.totalAmountScheduled()).to.be.equal(withdrawAmount);
-      })
-
-      it("can runScheduleWithdraw from two different candidates", async function() {
-        let delegationAmount = ethers.utils.parseEther("12.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount.div(2));
-        await glmrDelegator.connect(player1).runDelegate(candidate2.address, delegationAmount.div(2));
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation).sub(minDelegation);
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-
-        let expectedDelegation = (delegationAmount.div(2)).sub(withdrawAmount.div(2));
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(expectedDelegation);
-        expect(await glmrDelegator.delegations(candidate2.address)).to.be.equal(expectedDelegation);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await parachainStaking.totalAmountScheduled()).to.be.equal(withdrawAmount);
-      })
-
-      it("can emit TotalDelegatedUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await expect(await glmrDelegator.runScheduleWithdraw(withdrawAmount))
+        await expect(await glmrDelegator.connect(player1).runDelegate(candidate1.address, increasedDelegationAmount))
           .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(delegationAmount.sub(withdrawAmount));
+            .withArgs(initialDelegationAmount.add(increasedDelegationAmount))
+          .to.emit(glmrDelegator, 'DelegatorBondMore')
+            .withArgs(candidate1.address, increasedDelegationAmount)
+          .to.emit(glmrDelegator, 'DelegationIncreased')
+            .withArgs(candidate1.address, increasedDelegationAmount);
       })
-
-      it("can emit TotalPendingUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await expect(await glmrDelegator.runScheduleWithdraw(withdrawAmount))
-          .to.emit(glmrDelegator, 'TotalPendingUpdated')
-          .withArgs(withdrawAmount);
-      })
-
     })
 
     context("runSingleScheduleWithdraw", function() {
-      beforeEach(async () => {
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+      context("No depositor role", function() {
+        it("Cannot runSingleScheduleWithdraw if not depositor", async function () {
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, "3000000000000000000")).to.be.revertedWith(
+            "GLMRDelegator.onlyDepositor: permission denied"
+            );
+        })
       })
 
-      it("cannot runScheduleWithdraw if not assets manager", async function() {
-        await expect(glmrDelegator.connect(player2).runSingleScheduleWithdraw(candidate1.address, "3000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
+      context("Has depositor role", function() {
+        beforeEach(async () => {
+          let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
+          await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+        })
 
-      it("cannot runScheduleWithdraw if depositor", async function() {
-        await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, "3000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
+        it("cannot runSingleScheduleWithdraw for zero amount", async function() {
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, 0)).to.be.revertedWith(
+            "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw 0 amount"
+            );
+        })
 
-      it("cannot runSingleScheduleWithdraw for zero amount", async function() {
-        await expect(glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, 0)).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw 0 amount"
-          );
-      })
+        it("cannot runSingleScheduleWithdraw for zero candidate address", async function() {
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(ZERO_ADDRESS, "3000000000000000000")).to.be.revertedWith(
+            "GLMRDelegator.runSingleScheduleWithdraw: candidate cannot be zero address"
+            );
+        })
 
-      it("cannot runSingleScheduleWithdraw for zero candidate address", async function() {
-        await expect(glmrDelegator.connect(owner).runSingleScheduleWithdraw(ZERO_ADDRESS, "3000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleWithdraw: candidate cannot be zero address"
-          );
-      })
+        it("cannot runSingleScheduleWithdraw for candidate not in the list", async function() {
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, "3000000000000000000")).to.be.revertedWith(
+            "GLMRDelegator.runSingleScheduleWithdraw: candidate not in the delegation list"
+            );
+        })
 
-      it("cannot runSingleScheduleWithdraw for candidate not in the list", async function() {
-        await expect(glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, "3000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleWithdraw: candidate not in the delegation list"
-          );
-      })
+        it("cannot runSingleScheduleWithdraw when no enough GLMRs are delegated for that candidate", async function() {
+          let delegationAmount = ethers.utils.parseEther("8.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: delegationAmount
+          });
+  
+          await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, delegationAmount.add(1))).to.be.revertedWith(
+            "GLMRDelegator.runSingleScheduleWithdraw: not enough GLMR delegated"
+            );
+        })
 
-      it("cannot runSingleScheduleWithdraw when no enough GLMRs are delegated for that candidate", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
+        it("cannot runSingleScheduleWithdraw one candidate below minimum delegation but not revoke", async function() {
+          let delegationAmount = ethers.utils.parseEther("8.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: delegationAmount
+          });
+  
+          await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+          
+          let minDelegation = await glmrDelegator.minDelegation();
+          await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, delegationAmount.sub(minDelegation));
+  
+          await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, minDelegation.sub(1))).to.be.revertedWith(
+            "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw below minimum delegation without revoke"
+            );
+        })
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        await expect(glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, delegationAmount.add(1))).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleWithdraw: not enought delegated amount"
-          );
-      })
+        context("Withdraw case", function() {
+          let delegationAmount = ethers.utils.parseEther("8.0")
 
-      it("cannot runSingleScheduleWithdraw one candidate below minimum delegation", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
+          beforeEach(async () => {
+            await owner.sendTransaction({
+              to: glmrDelegator.address,
+              value: delegationAmount
+            });
+    
+            await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+          })
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        
-        let minDelegation = await glmrDelegator.minDelegation();
-        await glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, delegationAmount.sub(minDelegation));
+          it("can successfully runSingleScheduleWithdraw", async function() {
+            // let delegationAmount = ethers.utils.parseEther("8.0")
+            // await owner.sendTransaction({
+            //   to: glmrDelegator.address,
+            //   value: delegationAmount
+            // });
+    
+            // await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+    
+            let minDelegation = await glmrDelegator.minDelegation();
+            let withdrawAmount = delegationAmount.sub(minDelegation);
+            await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, withdrawAmount);
+    
+            expect(await glmrDelegator.candidateExist(candidate1.address)).to.be.equal(true);
+            expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(withdrawAmount));
+            expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(withdrawAmount);
+            expect(await parachainStaking.amountScheduled(candidate1.address)).to.be.equal(withdrawAmount);
+            expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(1);
+            expect(await glmrDelegator.pendingCandidates(0)).to.be.equal(candidate1.address);
+            expect(await glmrDelegator.candidateWithPendingRequest(candidate1.address)).to.be.equal(true);
+          })
 
-        await expect(glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, minDelegation)).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleWithdraw: cannot withdraw below minimun delegation"
-          );
-      })
+          it("can emit correct event", async function() {
+            let minDelegation = await glmrDelegator.minDelegation();
+            let withdrawAmount = delegationAmount.sub(minDelegation);
+    
+            await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, withdrawAmount))
+              .to.emit(glmrDelegator, 'DelegatorLessBonded')
+                .withArgs(candidate1.address, withdrawAmount)
+              .to.emit(glmrDelegator, 'DelegationReduced')
+                .withArgs(candidate1.address, withdrawAmount)
+              .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
+                .withArgs(delegationAmount.sub(withdrawAmount))
+              .to.emit(glmrDelegator, 'TotalScheduledUpdated')
+                .withArgs(withdrawAmount);
+          })
+        })
 
-      it("can successfully runSingleScheduleWithdraw", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
+        context("Withdraw case", function() {
+          let delegationAmount = ethers.utils.parseEther("8.0")
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+          beforeEach(async () => {
+            await owner.sendTransaction({
+              to: glmrDelegator.address,
+              value: delegationAmount
+            });
+    
+            await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+          })
 
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-        await glmrDelegator.connect(owner).runSingleScheduleWithdraw(candidate1.address, withdrawAmount);
+          it("can successfully runSingleScheduleWithdraw to revoke single candidate when withdraw all delegation amount for single candidate", async function() {
+            await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, delegationAmount);
+    
+            expect(await glmrDelegator.candidateExist(candidate1.address)).to.be.equal(false);
+            expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(0);
+            expect(await glmrDelegator.totalDelegated()).to.be.equal(0);
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(delegationAmount);
+            expect(await parachainStaking.amountScheduled(candidate1.address)).to.be.equal(delegationAmount);
+            expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(1);
+            expect(await glmrDelegator.pendingCandidates(0)).to.be.equal(candidate1.address);
+            expect(await glmrDelegator.candidateWithPendingRequest(candidate1.address)).to.be.equal(true);
+          })
 
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await parachainStaking.totalAmountScheduled()).to.be.equal(withdrawAmount);
-      })
-
-      it("can emit TotalDelegatedUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await expect(glmrDelegator.runSingleScheduleWithdraw(candidate1.address, withdrawAmount))
-          .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(delegationAmount.sub(withdrawAmount));
-      })
-
-      it("can emit TotalPendingUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await expect(glmrDelegator.runSingleScheduleWithdraw(candidate1.address, withdrawAmount))
-          .to.emit(glmrDelegator, 'TotalPendingUpdated')
-          .withArgs(withdrawAmount);
-      })
-    })
-
-    context("runSingleScheduleRevoke", function() {
-      beforeEach(async () => {
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
-      })
-
-      it("cannot runSingleScheduleRevoke if not assets manager", async function() {
-        await expect(glmrDelegator.connect(player2).runSingleScheduleRevoke(candidate1.address)).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
-
-      it("cannot runSingleScheduleRevoke if depositor", async function() {
-        await expect(glmrDelegator.connect(player1).runSingleScheduleRevoke(candidate1.address)).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
-
-      it("cannot runSingleScheduleRevoke for zero candidate address", async function() {
-        await expect(glmrDelegator.connect(owner).runSingleScheduleRevoke(ZERO_ADDRESS)).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleRevoke: candidate cannot be zero address"
-          );
-      })
-
-      it("cannot runSingleScheduleRevoke for candidate not in the list", async function() {
-        await expect(glmrDelegator.connect(owner).runSingleScheduleRevoke(candidate1.address)).to.be.revertedWith(
-          "GLMRDelegator.runSingleScheduleRevoke: candidate not in the delegation list"
-          );
-      })
-
-      it("can successfully runSingleScheduleRevoke", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        await glmrDelegator.connect(owner).runSingleScheduleRevoke(candidate1.address);
-
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(0);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(0);
-        expect(await glmrDelegator.totalPending()).to.be.equal(delegationAmount);
-      })
-
-      it("can emit TotalDelegatedUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        await expect(glmrDelegator.connect(owner).runSingleScheduleRevoke(candidate1.address))
-          .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(0);
-      })
-
-      it("can emit TotalPendingUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        await expect(glmrDelegator.connect(owner).runSingleScheduleRevoke(candidate1.address))
-          .to.emit(glmrDelegator, 'TotalPendingUpdated')
-          .withArgs(delegationAmount);
+          it("can emit correct event", async function() {
+            await expect(glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, delegationAmount))
+              .to.emit(glmrDelegator, 'DelegatorRevokeScheduled')
+                .withArgs(candidate1.address)
+              .to.emit(glmrDelegator, 'CandidateRemoved')
+                .withArgs(candidate1.address)
+              .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
+                .withArgs(0)
+              .to.emit(glmrDelegator, 'TotalScheduledUpdated')
+                .withArgs(delegationAmount);
+          })
+        })
       })
     })
 
-    context("runScheduleRevokeAll", function() {
-      beforeEach(async () => {
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+    context("runExecuteAllDelegationRequests", function() {
+      context("No depositor role", function() {
+        it("Cannot runExecuteAllDelegationRequests if not depositor", async function () {
+          await expect(glmrDelegator.connect(player1).runExecuteAllDelegationRequests()).to.be.revertedWith(
+            "GLMRDelegator.onlyDepositor: permission denied"
+            );
+        })
       })
 
-      it("cannot runScheduleRevokeAll if not assets manager", async function() {
-        await expect(glmrDelegator.connect(player2).runScheduleRevokeAll()).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
+      context("Has depositor role", function() {
+        beforeEach(async () => {
+          let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
+          await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+        })
 
-      it("cannot runScheduleRevokeAll if depositor", async function() {
-        await expect(glmrDelegator.connect(player1).runScheduleRevokeAll()).to.be.revertedWith(
-          "GLMRDelegator.onlyAssetsManager: permission denied"
-          );
-      })
 
-      it("cannot runScheduleRevokeAll when no GLMRs are delegated", async function() {
-        await expect(glmrDelegator.connect(owner).runScheduleRevokeAll()).to.be.revertedWith(
-          "GLMRDelegator.runScheduleRevokeAll: no delegated GLMRs"
-          );
-      })
+        it("can runExecuteAllDelegationRequests when no pendingCandidates", async function() {
+          expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(0);
+          await glmrDelegator.connect(player1).runExecuteAllDelegationRequests();
+          expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(0);
+        })
 
-      it("can successfully runScheduleRevokeAll", async function() {
-        let delegationAmountForCandidate1 = ethers.utils.parseEther("8.0")
-        let delegationAmountForCandidate2 = ethers.utils.parseEther("10.0")
+        it("can successfully execute delegation request for pending candidates", async function() {
+          let candidate1DelegationAmount = ethers.utils.parseEther("8.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: candidate1DelegationAmount
+          });
+  
+          await glmrDelegator.connect(player1).runDelegate(candidate1.address, candidate1DelegationAmount);
+  
+          let candidate2DelegationAmount = ethers.utils.parseEther("10.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: candidate2DelegationAmount
+          });
 
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmountForCandidate1.add(delegationAmountForCandidate2)
-        });
+          await glmrDelegator.connect(player1).runDelegate(candidate2.address, candidate2DelegationAmount);
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmountForCandidate1);
-        await glmrDelegator.connect(player1).runDelegate(candidate2.address, delegationAmountForCandidate2);
+          let minDelegation = await glmrDelegator.minDelegation();
+          let candidate1WithdrawAmount = candidate1DelegationAmount.sub(minDelegation);
+          await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, candidate1WithdrawAmount);
+          await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate2.address, candidate2DelegationAmount);
 
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmountForCandidate1);
-        expect(await glmrDelegator.delegations(candidate2.address)).to.be.equal(delegationAmountForCandidate2);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmountForCandidate1.add(delegationAmountForCandidate2));
+          expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(2);
+          expect(await glmrDelegator.candidateWithPendingRequest(candidate1.address)).to.be.equal(true);
+          expect(await glmrDelegator.candidateWithPendingRequest(candidate2.address)).to.be.equal(true);
 
-        await glmrDelegator.connect(owner).runScheduleRevokeAll();
+          await glmrDelegator.connect(player1).runExecuteAllDelegationRequests();
 
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(0);
-        expect(await glmrDelegator.delegations(candidate2.address)).to.be.equal(0);
+          expect(await glmrDelegator.getPendingCandidatesLength()).to.be.equal(0);
+          expect(await glmrDelegator.candidateWithPendingRequest(candidate1.address)).to.be.equal(false);
+          expect(await glmrDelegator.candidateWithPendingRequest(candidate2.address)).to.be.equal(false);
+        })
 
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(0);
-        expect(await glmrDelegator.totalPending()).to.be.equal(delegationAmountForCandidate1.add(delegationAmountForCandidate2));
-      })
+        it("can emit DelegationRequestExecuted event", async function() {
+          let candidate1DelegationAmount = ethers.utils.parseEther("8.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: candidate1DelegationAmount
+          });
+  
+          await glmrDelegator.connect(player1).runDelegate(candidate1.address, candidate1DelegationAmount);
+  
+          let candidate2DelegationAmount = ethers.utils.parseEther("10.0")
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: candidate2DelegationAmount
+          });
 
-      it("can emit TotalDelegatedUpdated event", async function() {
-        let delegationAmountForCandidate1 = ethers.utils.parseEther("8.0")
-        let delegationAmountForCandidate2 = ethers.utils.parseEther("10.0")
+          await glmrDelegator.connect(player1).runDelegate(candidate2.address, candidate2DelegationAmount);
 
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmountForCandidate1.add(delegationAmountForCandidate2)
-        });
+          let minDelegation = await glmrDelegator.minDelegation();
+          let candidate1WithdrawAmount = candidate1DelegationAmount.sub(minDelegation);
+          await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, candidate1WithdrawAmount);
+          await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate2.address, candidate2DelegationAmount);
 
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmountForCandidate1);
-        await glmrDelegator.connect(player1).runDelegate(candidate2.address, delegationAmountForCandidate2);
-
-        await expect(glmrDelegator.connect(owner).runScheduleRevokeAll())
-          .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(0);
-      })
-
-      it("can emit TotalPendingUpdated event", async function() {
-        let delegationAmountForCandidate1 = ethers.utils.parseEther("8.0")
-        let delegationAmountForCandidate2 = ethers.utils.parseEther("10.0")
-
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmountForCandidate1.add(delegationAmountForCandidate2)
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmountForCandidate1);
-        await glmrDelegator.connect(player1).runDelegate(candidate2.address, delegationAmountForCandidate2);
-
-        await expect(glmrDelegator.connect(owner).runScheduleRevokeAll())
-          .to.emit(glmrDelegator, 'TotalPendingUpdated')
-          .withArgs(delegationAmountForCandidate1.add(delegationAmountForCandidate2));
+          await expect(glmrDelegator.connect(player1).runExecuteAllDelegationRequests())
+            .to.emit(glmrDelegator, 'DelegationRequestExecuted')
+            .withArgs(candidate1.address)
+            .to.emit(glmrDelegator, 'DelegationRequestExecuted')
+            .withArgs(candidate2.address);
+        })
       })
     })
 
     context("runWithdraw", function() {
-      beforeEach(async () => {
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+
+      context("No depositor role", function() {
+        it("cannot runWithdraw if not depositor", async function() {
+          await expect(glmrDelegator.connect(player1).runWithdraw(player1.address, "3000000000000000000", false)).to.be.revertedWith(
+            "GLMRDelegator.onlyDepositor: permission denied"
+            );
+        })
       })
 
-      it("cannot runWithdraw if not depositor or assets manager", async function() {
-        await expect(glmrDelegator.connect(player2).runWithdraw(player1.address, "3000000000000000000", false)).to.be.revertedWith(
-          "GLMRDelegator.onlyDepositorOrAssetsManager: permission denied"
-          );
+      context("Has depositor role", function() {
+        beforeEach(async () => {
+          let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
+          await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
+        })
+
+        it("cannot runWithdraw for zero receiver address", async function() {
+          await expect(glmrDelegator.connect(player1).runWithdraw(ZERO_ADDRESS, "3000000000000000000", false)).to.be.revertedWith(
+            "GLMRDelegator.runWithdraw: receiver cannot be zero address"
+            );
+        })
+
+        it("cannot runWithdraw for zero amount", async function() {
+          await expect(glmrDelegator.connect(player1).runWithdraw(player1.address, 0, false)).to.be.revertedWith(
+            "GLMRDelegator.runWithdraw: cannot withdraw 0 amount"
+            );
+        })
+
+        it("cannot runWithdraw when no enough GLMRs", async function() {
+          let glmrAmount = ethers.utils.parseEther("1.0")
+
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: glmrAmount
+          });
+  
+          await expect(glmrDelegator.connect(player1).runWithdraw(player1.address, glmrAmount.add(1), false)).to.be.revertedWith(
+            "GLMRDelegator.runWithdraw: no enough GLMRs"
+            );
+        })
+
+        it("cannot runWithdraw when no enough scheduled GLMRs", async function() {
+          let glmrAmount = ethers.utils.parseEther("2.0")
+
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: glmrAmount
+          });
+  
+          await expect(glmrDelegator.connect(player1).runWithdraw(player1.address, glmrAmount, false)).to.be.revertedWith(
+            "GLMRDelegator.runWithdraw: no enough scheduled GLMRs"
+            );
+        })
+
+        context("withdraw case", function() {
+          let delegationAmount;
+          let scheduledWithdrawAmount;
+
+          beforeEach(async () => {
+            delegationAmount = ethers.utils.parseEther("8.0");
+            await owner.sendTransaction({
+              to: glmrDelegator.address,
+              value: delegationAmount
+            });
+    
+            await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+    
+            let minDelegation = await glmrDelegator.minDelegation();
+            scheduledWithdrawAmount = delegationAmount.sub(minDelegation);
+    
+            await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, scheduledWithdrawAmount);
+            await glmrDelegator.connect(player1).runExecuteAllDelegationRequests();
+          })
+
+          it("can runWithdraw but not redelegate", async function() {
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(scheduledWithdrawAmount);
+
+            let withdrawAmount = scheduledWithdrawAmount.div(2);
+
+            let beforeBal = await ethers.provider.getBalance(player2.address);
+            await glmrDelegator.connect(player1).runWithdraw(player2.address, withdrawAmount, false);
+            let afterBal = await ethers.provider.getBalance(player2.address);
+    
+            expect(afterBal.sub(beforeBal)).to.be.equal(withdrawAmount);
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(scheduledWithdrawAmount.sub(withdrawAmount));
+          })
+
+          it("can emit correct event", async function() {
+            let withdrawAmount = scheduledWithdrawAmount.div(2);
+
+            await expect(glmrDelegator.connect(player1).runWithdraw(player2.address, withdrawAmount, false))
+              .to.emit(glmrDelegator, 'TotalScheduledUpdated')
+                .withArgs(scheduledWithdrawAmount.sub(withdrawAmount));
+          })
+        })
+
+        context("redelegate case", function() {
+          let delegationAmount;
+          let scheduledWithdrawAmount;
+
+          beforeEach(async () => {
+            delegationAmount = ethers.utils.parseEther("20.0");
+            await owner.sendTransaction({
+              to: glmrDelegator.address,
+              value: delegationAmount
+            });
+    
+            await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
+    
+            let minDelegation = await glmrDelegator.minDelegation();
+            scheduledWithdrawAmount = delegationAmount.sub(minDelegation);
+    
+            await glmrDelegator.connect(player1).runSingleScheduleWithdraw(candidate1.address, scheduledWithdrawAmount);
+            await glmrDelegator.connect(player1).runExecuteAllDelegationRequests();
+          })
+
+          it("cannot runWithdraw and redelegate to a new candidate if lower than minimum delegation", async function() {
+            let minDelegation = await glmrDelegator.minDelegation();
+
+            let redelegateAmount = minDelegation.sub(1);
+    
+            await expect(glmrDelegator.connect(player1).runWithdraw(candidate2.address, redelegateAmount, true)).to.be.revertedWith(
+              "GLMRDelegator.runWithdraw: need to meet the minimum delegation amount"
+              );
+          })
+
+          it("can runWithdraw and redelegate to a new candidate", async function() {
+            let minDelegation = await glmrDelegator.minDelegation();
+            let redelegateAmount = minDelegation.add(1);
+
+            await glmrDelegator.connect(player1).runWithdraw(candidate2.address, redelegateAmount, true);
+    
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(scheduledWithdrawAmount.sub(redelegateAmount));
+            expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(scheduledWithdrawAmount).add(redelegateAmount));
+            expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(scheduledWithdrawAmount));
+            expect(await glmrDelegator.delegations(candidate2.address)).to.be.equal(redelegateAmount);
+          })
+
+          it("can emit correct event when redelegate to a new candidate", async function() {
+            let redelegateAmount = scheduledWithdrawAmount.div(2);
+
+            await expect(glmrDelegator.connect(player1).runWithdraw(candidate2.address, redelegateAmount, true))
+              .to.emit(glmrDelegator, 'DelegatorDelegated')
+                .withArgs(candidate2.address, redelegateAmount)
+              .to.emit(glmrDelegator, 'CandidateAdded')
+                .withArgs(candidate2.address, redelegateAmount)
+              .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
+                .withArgs(delegationAmount.sub(scheduledWithdrawAmount).add(redelegateAmount))
+              .to.emit(glmrDelegator, 'TotalScheduledUpdated')
+                .withArgs(scheduledWithdrawAmount.sub(redelegateAmount));
+          })
+
+          it("can runWithdraw and redelegate to an existing candidate", async function() {
+            let minDelegation = await glmrDelegator.minDelegation();
+            let redelegateAmount = minDelegation.add(1);
+
+            await glmrDelegator.connect(player1).runWithdraw(candidate1.address, redelegateAmount, true);
+    
+            expect(await glmrDelegator.totalScheduled()).to.be.equal(scheduledWithdrawAmount.sub(redelegateAmount));
+            expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(scheduledWithdrawAmount).add(redelegateAmount));
+            expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(scheduledWithdrawAmount).add(redelegateAmount));
+          })
+
+          it("can emit correct event when redelegate to a new candidate", async function() {
+            let redelegateAmount = scheduledWithdrawAmount.div(2);
+
+            await expect(glmrDelegator.connect(player1).runWithdraw(candidate1.address, redelegateAmount, true))
+              .to.emit(glmrDelegator, 'DelegatorMoreBonded')
+                .withArgs(candidate1.address, redelegateAmount)
+              .to.emit(glmrDelegator, 'DelegationIncreased')
+                .withArgs(candidate1.address, redelegateAmount)
+              .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
+                .withArgs(delegationAmount.sub(scheduledWithdrawAmount).add(redelegateAmount))
+              .to.emit(glmrDelegator, 'TotalScheduledUpdated')
+                .withArgs(scheduledWithdrawAmount.sub(redelegateAmount));
+          })
+        })
+
       })
-
-      it("cannot runWithdraw for zero receiver address", async function() {
-        await expect(glmrDelegator.connect(owner).runWithdraw(ZERO_ADDRESS, "3000000000000000000", false)).to.be.revertedWith(
-          "GLMRDelegator.runWithdraw: receiver cannot be zero address"
-          );
-      })
-
-      it("cannot runWithdraw for zero amount", async function() {
-        await expect(glmrDelegator.connect(owner).runWithdraw(player1.address, 0, false)).to.be.revertedWith(
-          "GLMRDelegator.runWithdraw: cannot withdraw 0 amount"
-          );
-      })
-
-      it("cannot runWithdraw when no enough GLMRs", async function() {
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: ethers.utils.parseEther("1.0")
-        });
-
-        await expect(glmrDelegator.connect(owner).runWithdraw(player1.address, "2000000000000000000", false)).to.be.revertedWith(
-          "GLMRDelegator.runWithdraw: no enough GLMRs"
-          );
-      })
-
-      it("cannot runWithdraw when no enough pending GLMRs", async function() {
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: ethers.utils.parseEther("2.0")
-        });
-
-        await expect(glmrDelegator.connect(owner).runWithdraw(player1.address, "2000000000000000000", false)).to.be.revertedWith(
-          "GLMRDelegator.runWithdraw: no enough pending GLMRs"
-          );
-      })
-
-      it("can runWithdraw but not redelegate", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-        await glmrDelegator.connect(owner).executeDelegationRequest(glmrDelegator.address, candidate1.address);
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-
-        let beforeBal = await ethers.provider.getBalance(player1.address);
-        await glmrDelegator.connect(owner).runWithdraw(player1.address, withdrawAmount, false);
-        let afterBal = await ethers.provider.getBalance(player1.address);
-
-        expect(afterBal.sub(beforeBal)).to.be.equal(withdrawAmount);
-        expect(await glmrDelegator.totalPending()).to.be.equal(0);
-
-      })
-
-      it("can runWithdraw but not redelegate", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-        await glmrDelegator.connect(owner).executeDelegationRequest(glmrDelegator.address, candidate1.address);
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-
-        let depositorRole = await glmrDelegator.DEPOSITOR_ROLE();
-        await glmrDelegator.connect(owner).grantRole(depositorRole, player1.address);
-
-        let beforeBal = await ethers.provider.getBalance(player2.address);
-        await glmrDelegator.connect(player1).runWithdraw(player2.address, withdrawAmount, false);
-        let afterBal = await ethers.provider.getBalance(player2.address);
-
-        expect(afterBal.sub(beforeBal)).to.be.equal(withdrawAmount);
-        expect(await glmrDelegator.totalPending()).to.be.equal(0);
-      })
-
-      it("can emit TotalPendingUpdated event", async function() {
-        let delegationAmount = ethers.utils.parseEther("8.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-        await glmrDelegator.connect(owner).executeDelegationRequest(glmrDelegator.address, candidate1.address);
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-
-        await expect(glmrDelegator.connect(owner).runWithdraw(player1.address, withdrawAmount, false))
-          .to.emit(glmrDelegator, 'TotalPendingUpdated')
-          .withArgs(0);
-      })
-
-      it("can runWithdraw and redelegate", async function() {
-        let delegationAmount = ethers.utils.parseEther("20.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-        await glmrDelegator.connect(owner).executeDelegationRequest(glmrDelegator.address, candidate1.address);
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-
-        await glmrDelegator.connect(owner).runWithdraw(candidate2.address, withdrawAmount, true);
-
-        expect(await glmrDelegator.totalPending()).to.be.equal(0);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount);
-        expect(await glmrDelegator.delegations(candidate1.address)).to.be.equal(delegationAmount.sub(withdrawAmount));
-        expect(await glmrDelegator.delegations(candidate2.address)).to.be.equal(withdrawAmount);
-      })
-
-      it("can emit TotalDelegatedUpdated event when redelegate", async function() {
-        let delegationAmount = ethers.utils.parseEther("20.0")
-        await owner.sendTransaction({
-          to: glmrDelegator.address,
-          value: delegationAmount
-        });
-
-        await glmrDelegator.connect(player1).runDelegate(candidate1.address, delegationAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount);
-
-        let minDelegation = await glmrDelegator.minDelegation();
-        let withdrawAmount = delegationAmount.sub(minDelegation);
-
-        await glmrDelegator.connect(owner).runScheduleWithdraw(withdrawAmount);
-        await glmrDelegator.connect(owner).executeDelegationRequest(glmrDelegator.address, candidate1.address);
-        expect(await glmrDelegator.totalPending()).to.be.equal(withdrawAmount);
-        expect(await glmrDelegator.totalDelegated()).to.be.equal(delegationAmount.sub(withdrawAmount));
-
-        await expect(glmrDelegator.connect(owner).runWithdraw(candidate2.address, withdrawAmount, true))
-          .to.emit(glmrDelegator, 'TotalDelegatedUpdated')
-          .withArgs(delegationAmount);
-      })
-
     })
 
     context("harvest", function() {

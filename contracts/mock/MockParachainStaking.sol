@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.12;
 
-import "../interfaces/IParachainStaking.sol";
+import "../core/interfaces/IParachainStaking.sol";
+import "hardhat/console.sol";
 
 contract MockParachainStaking is IParachainStaking {
     address public glmrDelegator;
-    uint256 public totalAmountScheduled;
+    mapping(address => uint256) public amountDelegated; 
+    mapping(address => uint256) public amountScheduled;
 
     constructor() {}
 
@@ -63,7 +65,7 @@ contract MockParachainStaking is IParachainStaking {
         uint256 candidateDelegationCount,
         uint256 delegatorDelegationCount
     ) external {
-        //do nothing
+        amountDelegated[candidate] = amount;
     }
 
     function schedule_leave_delegators() external {}
@@ -72,18 +74,23 @@ contract MockParachainStaking is IParachainStaking {
 
     function cancel_leave_delegators() external {}
 
-    function schedule_revoke_delegation(address candidate) external {}
+    function schedule_revoke_delegation(address candidate) external {
+        amountScheduled[candidate] += amountDelegated[candidate];
+        amountDelegated[candidate] = 0;
+    }
 
     function delegator_bond_more(address candidate, uint256 more) external {
-        //do nothing
+        amountDelegated[candidate] += more;
     }
     
     function schedule_delegator_bond_less(address candidate, uint256 less) external {
-        totalAmountScheduled += less;
+        amountScheduled[candidate] += less;
+        amountDelegated[candidate] -= less;
     }
 
     function execute_delegation_request(address delegator, address candidate) external {
-        (bool success, ) = glmrDelegator.call{value: totalAmountScheduled}("");
+        uint256 amountScheduled = amountScheduled[candidate];
+        (bool success, ) = glmrDelegator.call{value: amountScheduled}("");
 		require(success, "MockParachainStaking.execute_delegation_request: Transfer failed.");
     }
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.12;
 
-import "./base/TokenSaver.sol";
+import "../base/TokenSaver.sol";
 import "./interfaces/IParachainStaking.sol";
+import "hardhat/console.sol";
 
 contract GLMRDelegator is TokenSaver {
     bytes32 public constant DEPOSITOR_ROLE = keccak256("DEPOSITOR_ROLE");
-    bytes32 public constant ASSETS_MANAGER_ROLE = keccak256("ASSETS_MANAGER_ROLE");
     bytes32 public constant REWARD_COLLECTOR_ROLE = keccak256("REWARD_COLLECTOR_ROLE");
 
     address public immutable stakingDelegations;
@@ -17,7 +17,10 @@ contract GLMRDelegator is TokenSaver {
     address constant GUARD = address(1);
 
     uint256 public totalDelegated;
-    uint256 public totalPending;
+    uint256 public totalScheduled;
+
+    address[] public pendingCandidates;
+    mapping(address => bool) public candidateWithPendingRequest;
 
     event StakingDelegationsSet(address stakingDelegations);
     event CandidateAdded(address indexed candidate, uint256 delegation);
@@ -25,15 +28,19 @@ contract GLMRDelegator is TokenSaver {
     event DelegationIncreased(address indexed candidate, uint256 increased);
     event DelegationReduced(address indexed candidate, uint256 reduced);
     event TotalDelegatedUpdated(uint256 totalDelegated);
-    event TotalPendingUpdated(uint256 totalPending);
+    event TotalScheduledUpdated(uint256 totalScheduled);
     event RewardsHarvested(address receiver, uint256 amount);
+    
+    event DelegatorDelegated(address indexed candidate, uint256 amount);
+    event DelegatorMoreBonded(address indexed canidate, uint256 more);
+    event DelegatorLessBonded(address indexed candidate, uint256 less);
+    event DelegatorRevokeScheduled(address indexed candidate);
+    event DelegationRequestExecuted(address indexed candidate);
 
     constructor(address _stakingDelegations) {
         require(_stakingDelegations != address(0), "GLMRDelegator.constructor: stakingDelegations cannot be zero address");
         stakingDelegations = _stakingDelegations;
         _nextCandidates[GUARD] = GUARD;
-
-        _setupRole(ASSETS_MANAGER_ROLE, msg.sender);
 
         emit StakingDelegationsSet(_stakingDelegations);
     }
@@ -43,7 +50,7 @@ contract GLMRDelegator is TokenSaver {
     function runDelegate(address _candidate, uint256 _amount) external onlyDepositor {
         require(_candidate != address(0), "GLMRDelegator.runDelegate: candidate cannot be zero address");
         require(_amount > 0, "GLMRDelegator.runDelegate: cannot delegate 0 amount");
-        require(balances() >= _amount, "GLMRDelegator.runDelegate: no enought GLMRs");
+        require(balances() >= _amount, "GLMRDelegator.runDelegate: no enough GLMRs");
 
         if (candidateExist(_candidate)) {
             _delegatorBondMore(_candidate, _amount);
@@ -57,102 +64,52 @@ contract GLMRDelegator is TokenSaver {
         emit TotalDelegatedUpdated(totalDelegated);
     }
 
-    function runScheduleWithdraw(uint256 _amount) external onlyDepositorOrAssetsManager {
-        require(_amount > 0, "GLMRDelegator.runScheduleWithdraw: cannot schedule withdraw 0 amount");
-        require(totalDelegated >= _amount, "GLMRDelegator.runScheduleWithdraw: not enough GLMR delegated for withdraw");
-
-        uint256 remainingAmount = _amount;
-        address[] memory candidateLists = getTop(listSize);
-        for (uint i=0; i<candidateLists.length; i++) {
-            if (remainingAmount <= 0) {
-                break;
-            }
-
-            address candidate = candidateLists[i];
-            uint256 delegatedAmount = delegations[candidate];
-            uint256 withdrawableAmount = delegatedAmount > minDelegation() ? delegatedAmount - minDelegation() : 0;
-            uint256 amount;
-            if (withdrawableAmount == 0) {
-                continue;
-            }
-            if (withdrawableAmount >= remainingAmount) {
-                amount = remainingAmount;
-            } else {
-                amount = withdrawableAmount;
-            }
-
-            _scheduleDelegatorBondLess(candidate, amount);
-            _reduceDelegation(candidate, amount);
-            totalDelegated -= amount;
-            totalPending += amount;
-            remainingAmount -= amount;
-        }
-
-        require(remainingAmount == 0, "GLMRDelegator.runScheduleWithdraw: not enough GLMR to schedule withdraw");
-        
-        emit TotalDelegatedUpdated(totalDelegated);
-        emit TotalPendingUpdated(totalPending);
-    }
-
-    function runSingleScheduleWithdraw(address _candidate, uint256 _amount) external onlyAssetsManager {
+    function runSingleScheduleWithdraw(address _candidate, uint256 _amount) external onlyDepositor {
         require(_amount > 0, "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw 0 amount");
         require(_candidate != address(0), "GLMRDelegator.runSingleScheduleWithdraw: candidate cannot be zero address");
         require(candidateExist(_candidate), "GLMRDelegator.runSingleScheduleWithdraw: candidate not in the delegation list");
-        
         uint256 delegatedAmount = delegations[_candidate];
-        uint256 withdrawableAmount = delegatedAmount > minDelegation() ? delegatedAmount - minDelegation() : 0;
-        require(withdrawableAmount > 0, "GLMRDelegator.runSingleScheduleWithdraw: cannot withdraw below minimun delegation");
-        require(withdrawableAmount >= _amount, "GLMRDelegator.runSingleScheduleWithdraw: not enought delegated amount");
+        require(delegatedAmount >= _amount, "GLMRDelegator.runSingleScheduleWithdraw: not enough GLMR delegated");
 
-        _scheduleDelegatorBondLess(_candidate, _amount);
-        _reduceDelegation(_candidate, _amount);
-        totalDelegated -= _amount;
-        totalPending += _amount;
-
-        emit TotalDelegatedUpdated(totalDelegated);
-        emit TotalPendingUpdated(totalPending);
-    }
-
-    function runSingleScheduleRevoke(address _candidate) external onlyAssetsManager {
-        require(_candidate != address(0), "GLMRDelegator.runSingleScheduleRevoke: candidate cannot be zero address");
-        require(candidateExist(_candidate), "GLMRDelegator.runSingleScheduleRevoke: candidate not in the delegation list");
-        uint256 delegatedAmount = delegations[_candidate];
-        require(delegatedAmount > 0, "GLMRDelegator.runSingleScheduleRevoke: no GLMR delegated");
-
-        _scheduleRevokeDelegation(_candidate);
-        _removeCandidate(_candidate);
-        totalDelegated -= delegatedAmount;
-        totalPending += delegatedAmount;
-
-        emit TotalDelegatedUpdated(totalDelegated);
-        emit TotalPendingUpdated(totalPending);
-    }
-
-    function runScheduleRevokeAll() external onlyAssetsManager {
-        require(totalDelegated > 0, "GLMRDelegator.runScheduleRevokeAll: no delegated GLMRs");
-
-        address[] memory candidateLists = getTop(listSize);
-        for (uint i=0; i<candidateLists.length; i++) {
-            address candidate = candidateLists[i];
-            uint256 delegatedAmount = delegations[candidate];
-
-            if (delegatedAmount > 0) {
-                _scheduleRevokeDelegation(candidate);
-                _removeCandidate(candidate);
-                totalDelegated -= delegatedAmount;
-                totalPending += delegatedAmount;
-            }
+        uint256 remainingAmount = delegatedAmount - _amount;
+        if (remainingAmount >= minDelegation()) {
+            _scheduleDelegatorBondLess(_candidate, _amount);
+            _reduceDelegation(_candidate, _amount);
+            totalDelegated -= _amount;
+            totalScheduled += _amount;
+        } else {
+            require(remainingAmount == 0, "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw below minimum delegation without revoke");
+            _scheduleRevokeDelegation(_candidate);
+            _removeCandidate(_candidate);
+            totalDelegated -= delegatedAmount;
+            totalScheduled += delegatedAmount;
+        }
+        if (!candidateWithPendingRequest[_candidate]) {
+            pendingCandidates.push(_candidate);
+            candidateWithPendingRequest[_candidate] = true;
         }
 
         emit TotalDelegatedUpdated(totalDelegated);
-        emit TotalPendingUpdated(totalPending);
+        emit TotalScheduledUpdated(totalScheduled);
     }
 
-    function runWithdraw(address _receiver, uint256 _amount, bool redelegate) external onlyDepositorOrAssetsManager {
+    function runExecuteAllDelegationRequests() external onlyDepositor {
+        for (uint i=0; i<pendingCandidates.length; i++) {
+            address candidate = pendingCandidates[i];
+
+            if (candidateWithPendingRequest[candidate]) {
+                _executeDelegationRequest(candidate);
+                candidateWithPendingRequest[candidate] = false;
+            }
+        }
+        delete pendingCandidates;
+    }
+
+    function runWithdraw(address _receiver, uint256 _amount, bool redelegate) external onlyDepositor {
         require(_receiver != address(0), "GLMRDelegator.runWithdraw: receiver cannot be zero address");
         require(_amount > 0, "GLMRDelegator.runWithdraw: cannot withdraw 0 amount");
         require(balances() >= _amount, "GLMRDelegator.runWithdraw: no enough GLMRs");
-        require(totalPending >= _amount, "GLMRDelegator.runWithdraw: no enough pending GLMRs");
+        require(totalScheduled >= _amount, "GLMRDelegator.runWithdraw: no enough scheduled GLMRs");
 
         if (redelegate) {
             if (candidateExist(_receiver) && delegations[_receiver] > 0) {
@@ -170,8 +127,8 @@ contract GLMRDelegator is TokenSaver {
 		    require(success, "GLMRDelegator.runWithdraw: Transfer failed.");
         }
         
-        totalPending -= _amount;
-        emit TotalPendingUpdated(totalPending);
+        totalScheduled -= _amount;
+        emit TotalScheduledUpdated(totalScheduled);
     }
 
     function harvest(address _receiver) external onlyRewardCollector {
@@ -184,14 +141,18 @@ contract GLMRDelegator is TokenSaver {
 
     function availabeToHarvest() public view returns(uint256) {
         uint256 currentBalance = balances();
-        if (currentBalance <= totalPending) {
+        if (currentBalance <= totalScheduled) {
             return 0;
         } 
-        return currentBalance - totalPending;
+        return currentBalance - totalScheduled;
     }
 
     function balances() public view returns(uint256) {
         return address(this).balance;
+    }
+
+     function getPendingCandidatesLength() public view returns(uint256) {
+        return pendingCandidates.length;
     }
 
     /* ======== Modifier Functions ======== */
@@ -202,24 +163,10 @@ contract GLMRDelegator is TokenSaver {
         _;
     }
 
-    modifier onlyAssetsManager() {
-        require(
-            hasRole(ASSETS_MANAGER_ROLE, msg.sender), 
-            "GLMRDelegator.onlyAssetsManager: permission denied");
-        _;
-    }
-
     modifier onlyRewardCollector() {
         require(
             hasRole(REWARD_COLLECTOR_ROLE, msg.sender), 
             "GLMRDelegator.onlyRewardCollector: permission denied");
-        _;
-    }
-
-    modifier onlyDepositorOrAssetsManager() {
-        require(
-            hasRole(ASSETS_MANAGER_ROLE, msg.sender) || hasRole(DEPOSITOR_ROLE, msg.sender), 
-            "GLMRDelegator.onlyDepositorOrAssetsManager: permission denied");
         _;
     }
 
@@ -320,53 +267,39 @@ contract GLMRDelegator is TokenSaver {
     }
 
     function _delegate(address _candidate, uint256 _amount) internal virtual {
-        require(_candidate != address(0), "GLMRDelegator.delegate: candidate cannot be zero address");
-        require(_amount > 0, "GLMRDelegator.delegate: cannot delegate 0 amount");
+        require(_candidate != address(0), "GLMRDelegator._delegate: candidate cannot be zero address");
+        require(_amount > 0, "GLMRDelegator._delegate: cannot delegate 0 amount");
         uint256 candidateDelegationCount = IParachainStaking(stakingDelegations).candidate_delegation_count(_candidate);
         uint256 delegatorDelegationCount = IParachainStaking(stakingDelegations).delegator_delegation_count(address(this));
         IParachainStaking(stakingDelegations).delegate(_candidate, _amount, candidateDelegationCount, delegatorDelegationCount);
+        emit DelegatorDelegated(_candidate, _amount);
     }
 
     function _delegatorBondMore(address _candidate, uint256 _more) internal virtual {
-        require(_candidate != address(0), "GLMRDelegator.delegatorBondMore: candidate cannot be zero address");
-        require(_more > 0, "GLMRDelegator.delegatorBondMore: cannot bond more 0 amount");
-        require(candidateExist(_candidate), "GLMRDelegator.delegatorBondMore: candidate not in the delegation list");
+        require(_candidate != address(0), "GLMRDelegator._delegatorBondMore: candidate cannot be zero address");
+        require(_more > 0, "GLMRDelegator._delegatorBondMore: cannot bond more 0 amount");
+        require(candidateExist(_candidate), "GLMRDelegator._delegatorBondMore: candidate not in the delegation list");
         IParachainStaking(stakingDelegations).delegator_bond_more(_candidate, _more);
+        emit DelegatorMoreBonded(_candidate, _more);
     }
 
     function _scheduleDelegatorBondLess(address _candidate, uint256 _less) internal {
-        require(_candidate != address(0), "GLMRDelegator.scheduleDelegatorBondLess: candidate cannot be zero address");
-        require(_less > 0, "GLMRDelegator.scheduleDelegatorBondLess: cannot bond less 0 amount");
+        require(_candidate != address(0), "GLMRDelegator._scheduleDelegatorBondLess: candidate cannot be zero address");
+        require(_less > 0, "GLMRDelegator._scheduleDelegatorBondLess: cannot bond less 0 amount");
         IParachainStaking(stakingDelegations).schedule_delegator_bond_less(_candidate, _less);
+        emit DelegatorLessBonded(_candidate, _less);
     }
 
     function _scheduleRevokeDelegation(address _candidate) internal {
-        require(_candidate != address(0), "GLMRDelegator.scheduleRevokeDelegation: candidate cannot be zero address");
-        require(candidateExist(_candidate), "GLMRDelegator.scheduleRevokeDelegation: candidate not in the delegation list");
+        require(_candidate != address(0), "GLMRDelegator._scheduleRevokeDelegation: candidate cannot be zero address");
+        require(candidateExist(_candidate), "GLMRDelegator._scheduleRevokeDelegation: candidate not in the delegation list");
         IParachainStaking(stakingDelegations).schedule_revoke_delegation(_candidate);
+        emit DelegatorRevokeScheduled(_candidate);
     }
 
-    function executeDelegationRequest(address _delegator, address _candidate) external onlyAssetsManager {
-        require(_delegator != address(0), "GLMRDelegator.executeDelegationRequest: delegator cannot be zero address");
-        require(_candidate != address(0), "GLMRDelegator.executeDelegationRequest: candidate cannot be zero address");
-        IParachainStaking(stakingDelegations).execute_delegation_request(_delegator, _candidate);
-    }
-
-    function cancelDelegationRequest(address _candidate) external onlyAssetsManager {
-        require(_candidate != address(0), "GLMRDelegator.cancelDelegationRequest: candidate cannot be zero address");
-        IParachainStaking(stakingDelegations).cancel_delegation_request(_candidate);
-    }
-
-    function scheduleLeaveDelegators() public onlyAssetsManager {
-        IParachainStaking(stakingDelegations).schedule_leave_delegators();
-    }
-
-    function executeLeaveDelegators() public onlyAssetsManager {
-        uint256 delegatorDelegationCount = IParachainStaking(stakingDelegations).delegator_delegation_count(address(this));
-        IParachainStaking(stakingDelegations).execute_leave_delegators(address(this), delegatorDelegationCount);
-    }
-
-    function cancelLeaveDelegators() public onlyAssetsManager {
-        IParachainStaking(stakingDelegations).cancel_leave_delegators();
+    function _executeDelegationRequest(address _candidate) internal {
+        require(_candidate != address(0), "GLMRDelegator._executeDelegationRequest: candidate cannot be zero address");
+        IParachainStaking(stakingDelegations).execute_delegation_request(address(this), _candidate);
+        emit DelegationRequestExecuted(_candidate);
     }
 }

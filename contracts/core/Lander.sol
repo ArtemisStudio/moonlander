@@ -4,7 +4,7 @@ pragma solidity 0.8.12;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract SGLMR is AccessControl, ERC20("Staked GLMR", "sGLMR") {
+contract Lander is AccessControl, ERC20("Lander Token", "LANDER") {
 
   bytes32 public constant ADMIN_ROLE = keccak256("ADMIN");
   bytes32 public constant MINTER_ROLE = keccak256("MINTER");
@@ -17,7 +17,7 @@ contract SGLMR is AccessControl, ERC20("Staked GLMR", "sGLMR") {
   }
 
   modifier onlyMinter() {
-    require(hasRole(MINTER_ROLE, msg.sender), "SGLMR: only minter");
+    require(hasRole(MINTER_ROLE, msg.sender), "LANDER: only minter");
     _;
   }
 
