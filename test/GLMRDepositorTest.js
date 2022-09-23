@@ -11,27 +11,20 @@ describe("GLMRDepositor", function () {
   let player1;
   let player2;
   let newGLMRDelegator;
-  let newMGLMRStakingZapper;
-  let landerSource;
 
   let MockParachainStakingFactory;
   let MockGLMRDelegatorFactory;
   let GLMRDepositorFactory;
   let MGLMRFactory;
   
-  let MasterChefV2Factory;
-  let ZapperFactory;
   let SGLMRFactory;
-  let MockERC20Factory;
-
   let parachainStaking;
   let glmrDepositor;
   let glmrDelegator;
-  let mGLMRStakingZapper;
   let mGLMR;
   let sGLMR;
-  let mcv2;
-  let lander;
+  let newSGLMR;
+  let treasury;
 
   const FIRST_EPOCH_NUMBER = 1;
   const EPOCH_DURATION = 28;
@@ -45,25 +38,28 @@ describe("GLMRDepositor", function () {
     MockGLMRDelegatorFactory = await ethers.getContractFactory("MockGLMRDelegator");
     GLMRDepositorFactory = await ethers.getContractFactory("GLMRDepositor");
     MGLMRFactory = await ethers.getContractFactory("MGLMR");
+    SGLMRFactory = await ethers.getContractFactory("SGLMR");
   });
 
   beforeEach(async () => {
-    [owner, candidate1, candidate2, candidate3, player1, player2, newGLMRDelegator, mGLMRStakingZapper, newMGLMRStakingZapper, landerSource] = await ethers.getSigners();
+    [owner, candidate1, candidate2, candidate3, player1, player2, newGLMRDelegator, treasury] = await ethers.getSigners();
 
     parachainStaking = await MockParachainStakingFactory.connect(owner).deploy();
     mGLMR = await MGLMRFactory.connect(owner).deploy();
 
-    // mGLMRStakingZapper = await MockMGLMRStakingZapperFactory.connect(owner).deploy(mGLMR.address);
+    sGLMR = await SGLMRFactory.connect(owner).deploy(mGLMR.address, "staked mGLMR", "sGLMR");
+    newSGLMR = await SGLMRFactory.connect(owner).deploy(mGLMR.address, "staked mGLMR", "sGLMR");
+
     glmrDelegator = await MockGLMRDelegatorFactory.connect(owner).deploy(parachainStaking.address);
     firstEpochEndBlock = EPOCH_DURATION*ROUND_DURATION
-    glmrDepositor = await GLMRDepositorFactory.connect(owner).deploy(glmrDelegator.address, mGLMR.address, mGLMRStakingZapper.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock);
+    glmrDepositor = await GLMRDepositorFactory.connect(owner).deploy(glmrDelegator.address, mGLMR.address, sGLMR.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock);
     await parachainStaking.connect(owner).setGLMRDelegator(glmrDelegator.address);
     await glmrDelegator.connect(owner).grantRole(await glmrDelegator.DEPOSITOR_ROLE(), glmrDepositor.address);
 
     expect(await glmrDepositor.hasRole(await glmrDepositor.ADMIN_ROLE(), owner.address)).to.be.equal(true);
     expect(await glmrDepositor.hasRole(await glmrDepositor.OPERATOR_ROLE(), owner.address)).to.be.equal(true);
     expect(await glmrDepositor.mGLMR()).to.be.equal(mGLMR.address);
-    expect(await glmrDepositor.mGLMRStakingZapper()).to.be.equal(mGLMRStakingZapper.address);
+    expect(await glmrDepositor.sGLMR()).to.be.equal(sGLMR.address);
     expect(await glmrDepositor.glmrDelegator()).to.be.equal(glmrDelegator.address);
 
     let epoch = await glmrDepositor.epoch();
@@ -76,37 +72,37 @@ describe("GLMRDepositor", function () {
 
   describe("Constructor", function() {
     it("Cannot deploy with zero glmrDelegator address", async function () {
-      await expect(GLMRDepositorFactory.connect(owner).deploy(ZERO_ADDRESS, mGLMR.address, mGLMRStakingZapper.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
+      await expect(GLMRDepositorFactory.connect(owner).deploy(ZERO_ADDRESS, mGLMR.address, sGLMR.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
         "GLMRDepositor.constructor: glmrDelegator cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero mGLMR address", async function () {
-      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, ZERO_ADDRESS, mGLMRStakingZapper.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
+      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, ZERO_ADDRESS, sGLMR.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
         "GLMRDepositor.constructor: mGLMR cannot be zero address"
         );
     });
 
-    it("Cannot deploy with zero mGLMRStakingZapper address", async function () {
+    it("Cannot deploy with zero sGLMR address", async function () {
       await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, ZERO_ADDRESS, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
-        "GLMRDepositor.constructor: mGLMRStakingZapper cannot be zero address"
+        "GLMRDepositor.constructor: sGLMR cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero round duration", async function () {
-      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, mGLMRStakingZapper.address, 0, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
+      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, sGLMR.address, 0, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
         "GLMRDepositor.constructor: round duration should be greater than zero"
         );
     });
 
     it("Cannot deploy with zero epoch duration", async function () {
-      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, mGLMRStakingZapper.address, ROUND_DURATION, 0, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
+      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, sGLMR.address, ROUND_DURATION, 0, FIRST_EPOCH_NUMBER, firstEpochEndBlock)).to.be.revertedWith(
         "GLMRDepositor.constructor: epoch duration should be greater than zero"
         );
     });
 
     it("Cannot deploy with zero firstEpochEndBlock duration", async function () {
-      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, mGLMRStakingZapper.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, 0)).to.be.revertedWith(
+      await expect(GLMRDepositorFactory.connect(owner).deploy(parachainStaking.address, mGLMR.address, sGLMR.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, 0)).to.be.revertedWith(
         "GLMRDepositor.constructor: first epoch end block should be greater than zero"
         );
     });
@@ -138,29 +134,29 @@ describe("GLMRDepositor", function () {
     });
   })
 
-  describe("updateMGLMRStakingZapper", function() {
-    it("Cannot updateMGLMRStakingZapper if not admin", async function () {
-      await expect(glmrDepositor.connect(player1).updateMGLMRStakingZapper(newMGLMRStakingZapper.address)).to.be.revertedWith(
+  describe("updateSGLMR", function() {
+    it("Cannot updateSGLMR if not admin", async function () {
+      await expect(glmrDepositor.connect(player1).updateSGLMR(newSGLMR.address)).to.be.revertedWith(
         "GLMRDepositor.onlyAdmin: permission denied"
       );
     })
 
-    it("Cannot updateMGLMRStakingZapper to zero address", async function () {
-      await expect(glmrDepositor.connect(owner).updateMGLMRStakingZapper(ZERO_ADDRESS)).to.be.revertedWith(
-        "GLMRDepositor.updateMGLMRStakingZapper: mGLMRStakingZapper cannot be zero address"
+    it("Cannot updateSGLMR to zero address", async function () {
+      await expect(glmrDepositor.connect(owner).updateSGLMR(ZERO_ADDRESS)).to.be.revertedWith(
+        "GLMRDepositor.updateSGLMR: sGLMR cannot be zero address"
       );
     })
 
-    it("Can successfully update mGLMRStakingZapper", async function () {
-      expect(await glmrDepositor.mGLMRStakingZapper()).to.be.equal(mGLMRStakingZapper.address);
-      await glmrDepositor.connect(owner).updateMGLMRStakingZapper(newMGLMRStakingZapper.address);
-      expect(await glmrDepositor.mGLMRStakingZapper()).to.be.equal(newMGLMRStakingZapper.address);
+    it("Can successfully update sGLMR", async function () {
+      expect(await glmrDepositor.sGLMR()).to.be.equal(sGLMR.address);
+      await glmrDepositor.connect(owner).updateSGLMR(newSGLMR.address);
+      expect(await glmrDepositor.sGLMR()).to.be.equal(newSGLMR.address);
     })
 
     it("Can emit correct event", async function() {
-      await expect(glmrDepositor.updateMGLMRStakingZapper(newMGLMRStakingZapper.address))
-        .to.emit(glmrDepositor, 'MGLMRStakingZapperUpdated')
-        .withArgs(newMGLMRStakingZapper.address);
+      await expect(glmrDepositor.updateSGLMR(newSGLMR.address))
+        .to.emit(glmrDepositor, 'SGLMRUpdated')
+        .withArgs(newSGLMR.address);
     });
   })
 
@@ -216,6 +212,13 @@ describe("GLMRDepositor", function () {
         await mGLMR.connect(owner).grantRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address);
         expect(await mGLMR.hasRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address)).to.be.equal(true);
       });
+
+      it("Cannot deposit if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).deposit(player1.address)).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot deposit 0 amount", async function () {
         await expect(glmrDepositor.connect(player1).deposit(player1.address)).to.be.revertedWith(
@@ -274,38 +277,6 @@ describe("GLMRDepositor", function () {
 
   describe("Deposit And Stake", function() {
 
-    before(async () => {
-      MasterChefV2Factory = await ethers.getContractFactory("StakingPools");
-      ZapperFactory = await ethers.getContractFactory("StakingZapper");
-      SGLMRFactory = await ethers.getContractFactory("SGLMR");
-      MockERC20Factory = await ethers.getContractFactory("MockERC20");
-    });
-
-    beforeEach(async () => {
-      lander = await MockERC20Factory.connect(owner).deploy("Lander Token", "LANDER");
-
-      sGLMR = await SGLMRFactory.connect(owner).deploy(mGLMR.address,"Staked Moon GLMR","sGLMR");
-
-      mGLMRStakingZapper = await ZapperFactory.connect(owner).deploy(sGLMR.address);
-
-      const startTime = (await latest()).add(60)
-
-      mcv2 = await MasterChefV2Factory.connect(owner).deploy(
-        lander.address,
-        100,
-        startTime,
-        landerSource.address,
-        mGLMRStakingZapper.address
-     )
-
-     await mcv2.connect(owner).add("100",sGLMR.address,ZERO_ADDRESS);
-
-     await mGLMRStakingZapper.connect(owner).initiate(mcv2.address,0);
-
-     await glmrDepositor.connect(owner).updateMGLMRStakingZapper(mGLMRStakingZapper.address);
-      
-    });
-
     context("No minter role", function() {
       it("Cannot deposit and stake if GLMRDepositor doesn't have minter role of mGLMR", async function () {
         overrides = { 
@@ -316,12 +287,19 @@ describe("GLMRDepositor", function () {
         );
       })
     })
-  
+
     context("Has minter role", function() {
       beforeEach(async () => {
         await mGLMR.connect(owner).grantRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address);
         expect(await mGLMR.hasRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address)).to.be.equal(true);
       });
+
+      it("Cannot deposit and stake if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).depositAndStake(player1.address)).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot deposit and stake 0 amount", async function () {
         await expect(glmrDepositor.connect(player1).depositAndStake(player1.address)).to.be.revertedWith(
@@ -351,10 +329,8 @@ describe("GLMRDepositor", function () {
         expect(await glmrDepositor.balances()).to.be.equal("1000000000000000000");
         expect(await glmrDepositor.totalDeposited()).to.be.equal("1000000000000000000");
         expect(await mGLMR.balanceOf(player1.address)).to.be.equal("0");
-        expect(await sGLMR.balanceOf(mcv2.address)).to.be.equal("1000000000000000000");
-        expect(await sGLMR.balanceOf(player1.address)).to.be.equal("0");
-
-        console.log(await mcv2.userInfo(0,player1.address));
+        expect(await sGLMR.balanceOf(player1.address)).to.be.equal("1000000000000000000");
+        
         
       });
 
@@ -371,13 +347,9 @@ describe("GLMRDepositor", function () {
         expect(await glmrDepositor.balances()).to.be.equal("1000000000000000000");
         expect(await glmrDepositor.totalDeposited()).to.be.equal("1000000000000000000");
         expect(await mGLMR.balanceOf(player2.address)).to.be.equal("0");
-        expect(await mGLMR.balanceOf(mGLMRStakingZapper.address)).to.be.equal("0");
-        expect(await sGLMR.balanceOf(mcv2.address)).to.be.equal("1000000000000000000");
+        expect(await mGLMR.balanceOf(sGLMR.address)).to.be.equal("1000000000000000000");
+        expect(await sGLMR.balanceOf(player2.address)).to.be.equal("1000000000000000000");
         expect(await sGLMR.balanceOf(player1.address)).to.be.equal("0");
-        expect(await sGLMR.balanceOf(player2.address)).to.be.equal("0");
-
-        console.log(await mcv2.userInfo(0,player1.address));
-        console.log(await mcv2.userInfo(0,player2.address));
       });
 
       it("Can emit correct event", async function() {
@@ -412,6 +384,13 @@ describe("GLMRDepositor", function () {
       beforeEach(async () => {
         await glmrDepositor.connect(owner).grantRole(await glmrDepositor.OPERATOR_ROLE(), player1.address);
       });
+
+      it("Cannot delegate if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).delegate(candidate1.address, delegatedValue1)).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot delegate to zero address", async function() {
         await expect(glmrDepositor.connect(player1).delegate(ZERO_ADDRESS, delegatedValue1)).to.be.revertedWith(
@@ -513,6 +492,13 @@ describe("GLMRDepositor", function () {
       beforeEach(async () => {
         await glmrDepositor.connect(owner).grantRole(await glmrDepositor.OPERATOR_ROLE(), player1.address);
       });
+
+      it("Cannot advanceEpoch if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).advanceEpoch([], [])).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot advanceEpoch if candidates and amounts mismatch", async function () {
         await expect(glmrDepositor.connect(player1).advanceEpoch([candidate1.address], [])).to.be.revertedWith(
@@ -647,6 +633,13 @@ describe("GLMRDepositor", function () {
       totalDepositedExpected = player1DepositValue.add(player2DepositValue);
     });
 
+    it("Cannot schedule withdraw if paused", async function () {
+      glmrDepositor.connect(owner).pause();
+      await expect(glmrDepositor.connect(player1).scheduleWithdraw(player1DepositValue)).to.be.revertedWith(
+          "Pausable: paused"
+        );
+    })
+
     it("Cannot schedule withdraw 0 amount", async function () {
       await expect(glmrDepositor.connect(player1).scheduleWithdraw(0)).to.be.revertedWith(
         "GLMRDepositor.scheduleWithdraw: cannot schedule withdraw 0 GLMR"
@@ -697,6 +690,13 @@ describe("GLMRDepositor", function () {
   describe("Withdarw", function() {
     afterEach(async () => {
       await hre.network.provider.send("hardhat_reset");
+    })
+
+    it("Cannot withdraw if paused", async function () {
+      glmrDepositor.connect(owner).pause();
+      await expect(glmrDepositor.connect(player1).withdraw(0, player1.address)).to.be.revertedWith(
+          "Pausable: paused"
+        );
     })
 
     it("Cannot withdraw when not scheduled", async function () {
@@ -829,18 +829,25 @@ describe("GLMRDepositor", function () {
       totalDepositedExpected = player1DepositValue.add(player2DepositValue);
     });
 
-    context("No admin role", function() {
-      it("Cannot call adminScheduleWithdraw if not admin", async function () {
+    context("No operator role", function() {
+      it("Cannot call adminScheduleWithdraw if not operator", async function () {
         await expect(glmrDepositor.connect(player1).adminScheduleWithdraw(0)).to.be.revertedWith(
-          "GLMRDepositor.onlyAdmin: permission denied"
+          "GLMRDepositor.onlyOperator: permission denied"
         );
       })
     })
 
-    context("Has admiin role", function() {
+    context("Has operator role", function() {
       beforeEach(async () => {
-        await glmrDepositor.connect(owner).grantRole(await glmrDepositor.ADMIN_ROLE(), player1.address);
+        await glmrDepositor.connect(owner).grantRole(await glmrDepositor.OPERATOR_ROLE(), player1.address);
       });
+
+      it("Cannot schedule withdraw if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).adminScheduleWithdraw(totalDepositedExpected)).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot schedule withdraw 0 amount", async function () {
         await expect(glmrDepositor.connect(player1).adminScheduleWithdraw(0)).to.be.revertedWith(
@@ -901,18 +908,25 @@ describe("GLMRDepositor", function () {
   })
 
   describe("Admin Redelegate", function() {
-    context("No admin role", function() {
+    context("No operator role", function() {
       it("Cannot redelegate if not admin", async function () {
         await expect(glmrDepositor.connect(player1).adminRedelegate(0, candidate3.address)).to.be.revertedWith(
-          "GLMRDepositor.onlyAdmin: permission denied"
+          "GLMRDepositor.onlyOperator: permission denied"
         );
       })
     })
 
-    context("Has amdin role", function() {
+    context("Has operator role", function() {
       beforeEach(async () => {
-        await glmrDepositor.connect(owner).grantRole(await glmrDepositor.ADMIN_ROLE(), player1.address);
+        await glmrDepositor.connect(owner).grantRole(await glmrDepositor.OPERATOR_ROLE(), player1.address);
       });
+
+      it("Cannot redelegate if paused", async function () {
+        glmrDepositor.connect(owner).pause();
+        await expect(glmrDepositor.connect(player1).adminRedelegate(0, candidate3.address)).to.be.revertedWith(
+            "Pausable: paused"
+          );
+      })
 
       it("Cannot redelegate when not scheduled", async function () {
         await expect(glmrDepositor.connect(player1).adminRedelegate(0, candidate3.address)).to.be.revertedWith(
@@ -1015,5 +1029,125 @@ describe("GLMRDepositor", function () {
         });
       })
     })
+  })
+
+  describe("Emergency Recall", function() {
+    context("No admin role", function() {
+      it("Cannot emergency recall if not admin", async function () {
+        await expect(glmrDepositor.connect(player1).emergencyRecall()).to.be.revertedWith(
+          "GLMRDepositor.onlyAdmin: permission denied"
+        );
+      })
+    })
+
+    context("Has admin role", function() {
+      beforeEach(async () => {
+        await glmrDepositor.connect(owner).grantRole(await glmrDepositor.ADMIN_ROLE(), player1.address);
+      });
+
+      it("Cannot emergency recall if not paused", async function () {
+        await expect(glmrDepositor.connect(player1).emergencyRecall()).to.be.revertedWith(
+          "Pausable: not paused"
+        );
+      })
+
+      context("When pause", function() {
+        let recallAmount;
+        beforeEach(async () => {
+          await glmrDepositor.connect(owner).pause();
+          await glmrDelegator.connect(owner).pause();
+
+          recallAmount = ethers.utils.parseEther("8.0");
+          await owner.sendTransaction({
+            to: glmrDelegator.address,
+            value: recallAmount
+          });
+        });
+
+        it("Can successfully emergency recall all the GLMR on glmrDelegator back to GLMRDepositor", async function () {
+          expect(await ethers.provider.getBalance(glmrDelegator.address)).to.be.equal(recallAmount);
+          expect(await ethers.provider.getBalance(glmrDepositor.address)).to.be.equal(0);
+          expect(await glmrDepositor.connect(player1).emergencyExit()).to.be.equal(false);
+
+          await glmrDepositor.connect(player1).emergencyRecall();
+
+          expect(await ethers.provider.getBalance(glmrDelegator.address)).to.be.equal(0);
+          expect(await ethers.provider.getBalance(glmrDepositor.address)).to.be.equal(recallAmount);
+          expect(await glmrDepositor.connect(player1).emergencyExit()).to.be.equal(true);
+        })
+      })
+    })
+  })
+
+  describe("Emergency Withdraw", function() {
+    let depositAmount;
+    beforeEach(async () => {
+      await mGLMR.connect(owner).grantRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address);
+      depositAmount = ethers.utils.parseEther("1.0")
+      overrides = { 
+        value: depositAmount
+      };
+
+      await glmrDepositor.connect(player1).deposit(player1.address, overrides);
+    });
+
+    it("Cannot emergency withdraw if not paused", async function () {
+      await expect(glmrDepositor.connect(player1).emergencyWithdraw(10, player1.address)).to.be.revertedWith(
+        "Pausable: not paused"
+      );
+    })
+
+    it("Cannot emergency withdraw if not in emergency exit mode", async function() {
+      await glmrDepositor.connect(owner).pause();
+      await glmrDelegator.connect(owner).pause();
+      await expect(glmrDepositor.connect(player1).emergencyWithdraw(10, player1.address)).to.be.revertedWith(
+        "GLMRDepositor.emergencyWithdraw: only in emergency exit mode"
+      );
+    })
+
+    it("Cannot emergency withdraw 0 amount", async function() {
+      await glmrDepositor.connect(owner).pause();
+      await glmrDelegator.connect(owner).pause();
+      await glmrDepositor.connect(owner).setEmergencyExit();
+
+      await expect(glmrDepositor.connect(player1).emergencyWithdraw(0, player1.address)).to.be.revertedWith(
+        "GLMRDepositor.emergencyWithdraw: cannot emergency withdraw 0 GLMR"
+      );
+    })
+
+    it("Cannot emergency withdraw more than you deposited", async function() {
+      await glmrDepositor.connect(owner).pause();
+      await glmrDelegator.connect(owner).pause();
+      await glmrDepositor.connect(owner).setEmergencyExit();
+
+      await expect(glmrDepositor.connect(player1).emergencyWithdraw(depositAmount.add(1), player1.address)).to.be.revertedWith(
+        "GLMRDepositor.emergencyWithdraw: not enough mGLMR"
+      );
+    })
+
+    it("Can successfully emergency withdraw all your deposits", async function() {
+      await glmrDepositor.connect(owner).pause();
+      await glmrDelegator.connect(owner).pause();
+      await glmrDepositor.connect(owner).setEmergencyExit();
+
+      expect(await mGLMR.balanceOf(player1.address)).to.be.equal(depositAmount);
+      let beforeBal = await ethers.provider.getBalance(player2.address);
+
+      await glmrDepositor.connect(player1).emergencyWithdraw(depositAmount, player2.address);
+
+      expect(await mGLMR.balanceOf(player1.address)).to.be.equal(0);
+      let afterBal = await ethers.provider.getBalance(player2.address);
+      expect(afterBal.sub(beforeBal)).to.be.equal(depositAmount);
+    })
+
+    it("Can emit correct event", async function() {
+      await glmrDepositor.connect(owner).pause();
+      await glmrDelegator.connect(owner).pause();
+      await glmrDepositor.connect(owner).setEmergencyExit();
+
+      await expect(glmrDepositor.connect(player1).emergencyWithdraw(depositAmount, player2.address))
+        .to.emit(glmrDepositor, 'EmergencyWithdrawn')
+        .withArgs(player2.address, player1.address, depositAmount);
+    });
   })
 });

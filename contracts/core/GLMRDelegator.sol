@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.12;
 
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "../base/TokenSaver.sol";
 import "./interfaces/IParachainStaking.sol";
 import "hardhat/console.sol";
 
-contract GLMRDelegator is TokenSaver {
+contract GLMRDelegator is TokenSaver, Pausable {
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant DEPOSITOR_ROLE = keccak256("DEPOSITOR_ROLE");
     bytes32 public constant REWARD_COLLECTOR_ROLE = keccak256("REWARD_COLLECTOR_ROLE");
 
@@ -42,12 +44,14 @@ contract GLMRDelegator is TokenSaver {
         stakingDelegations = _stakingDelegations;
         _nextCandidates[GUARD] = GUARD;
 
+        _setupRole(ADMIN_ROLE, msg.sender);
+
         emit StakingDelegationsSet(_stakingDelegations);
     }
 
     receive() external payable {}
 
-    function runDelegate(address _candidate, uint256 _amount) external onlyDepositor {
+    function runDelegate(address _candidate, uint256 _amount) external onlyDepositor whenNotPaused {
         require(_candidate != address(0), "GLMRDelegator.runDelegate: candidate cannot be zero address");
         require(_amount > 0, "GLMRDelegator.runDelegate: cannot delegate 0 amount");
         require(balances() >= _amount, "GLMRDelegator.runDelegate: no enough GLMRs");
@@ -64,7 +68,7 @@ contract GLMRDelegator is TokenSaver {
         emit TotalDelegatedUpdated(totalDelegated);
     }
 
-    function runSingleScheduleWithdraw(address _candidate, uint256 _amount) external onlyDepositor {
+    function runSingleScheduleWithdraw(address _candidate, uint256 _amount) external onlyDepositor whenNotPaused {
         require(_amount > 0, "GLMRDelegator.runSingleScheduleWithdraw: cannot schedule withdraw 0 amount");
         require(_candidate != address(0), "GLMRDelegator.runSingleScheduleWithdraw: candidate cannot be zero address");
         require(candidateExist(_candidate), "GLMRDelegator.runSingleScheduleWithdraw: candidate not in the delegation list");
@@ -93,7 +97,7 @@ contract GLMRDelegator is TokenSaver {
         emit TotalScheduledUpdated(totalScheduled);
     }
 
-    function runExecuteAllDelegationRequests() external onlyDepositor {
+    function runExecuteAllDelegationRequests() external onlyDepositor whenNotPaused {
         for (uint i=0; i<pendingCandidates.length; i++) {
             address candidate = pendingCandidates[i];
 
@@ -105,7 +109,7 @@ contract GLMRDelegator is TokenSaver {
         delete pendingCandidates;
     }
 
-    function runWithdraw(address _receiver, uint256 _amount, bool redelegate) external onlyDepositor {
+    function runWithdraw(address _receiver, uint256 _amount, bool redelegate) external onlyDepositor whenNotPaused {
         require(_receiver != address(0), "GLMRDelegator.runWithdraw: receiver cannot be zero address");
         require(_amount > 0, "GLMRDelegator.runWithdraw: cannot withdraw 0 amount");
         require(balances() >= _amount, "GLMRDelegator.runWithdraw: no enough GLMRs");
@@ -131,15 +135,16 @@ contract GLMRDelegator is TokenSaver {
         emit TotalScheduledUpdated(totalScheduled);
     }
 
-    function harvest(address _receiver) external onlyRewardCollector {
+    function harvest(address _receiver) external onlyRewardCollector whenNotPaused {
         require(_receiver != address(0), "GLMRDelegator.harvest: receiver cannot be zero address");
-        uint256 harvestAmount = availabeToHarvest();
+        uint256 harvestAmount = availableToHarvest();
         (bool success, ) = _receiver.call{value: harvestAmount}("");
 		require(success, "GLMRDelegator.harvest: Transfer failed.");
         emit RewardsHarvested(_receiver, harvestAmount);
     }
 
-    function availabeToHarvest() public view returns(uint256) {
+    /* ======== View Functions ======== */
+    function availableToHarvest() public view returns(uint256) {
         uint256 currentBalance = balances();
         if (currentBalance <= totalScheduled) {
             return 0;
@@ -156,6 +161,13 @@ contract GLMRDelegator is TokenSaver {
     }
 
     /* ======== Modifier Functions ======== */
+    modifier onlyAdmin() {
+        require(
+            hasRole(ADMIN_ROLE, msg.sender), 
+            "GLMRDelegator.onlyAdmin: permission denied");
+        _;
+    }
+
     modifier onlyDepositor() {
         require(
             hasRole(DEPOSITOR_ROLE, msg.sender), 
@@ -301,5 +313,28 @@ contract GLMRDelegator is TokenSaver {
         require(_candidate != address(0), "GLMRDelegator._executeDelegationRequest: candidate cannot be zero address");
         IParachainStaking(stakingDelegations).execute_delegation_request(address(this), _candidate);
         emit DelegationRequestExecuted(_candidate);
+    }
+
+    /* ======== Admin Functions ======== */
+    function pause() external onlyAdmin {
+        _pause();
+    }
+
+    function unpause() external onlyAdmin {
+        _unpause();
+    }
+
+    /* ======== Emergency Functions ======== */
+    function executeDelegationRequest(address _candidate) external onlyAdmin whenPaused {
+        _executeDelegationRequest(_candidate);
+    }
+
+    function scheduleRevokeDelegation(address _candidate) external onlyAdmin whenPaused {
+        _scheduleRevokeDelegation(_candidate);
+    }
+
+    function runEmergencyRecall(address _receiver) external onlyDepositor whenPaused {
+        (bool success, ) = _receiver.call{value: balances()}("");
+        require(success, "GLMRDelegator.runEmergencyRecall: Transfer failed.");
     }
 }

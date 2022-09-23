@@ -8,4 +8,5 @@ interface IGLMRDelegator {
      function runWithdraw(address _receiver, uint256 _amount, bool redelegate) external;
      function runSingleScheduleWithdraw(address _candidate, uint256 _amount) external;
      function runExecuteAllDelegationRequests() external;
+     function runEmergencyRecall(address _receiver) external;
 }

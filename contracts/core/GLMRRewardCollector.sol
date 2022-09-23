@@ -10,27 +10,36 @@ import "./interfaces/IMGLMR.sol";
 
 contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant REWARD_DISTRIBUTOR_ROLE = keccak256("REWARD_DISTRIBUTOR_ROLE");
 
     address public glmrDelegator;
     address public glmrDepositor;
     address public mGLMR;
     address public sGLMR;
+    address public treasury;
+
+    uint256 public feePercantage; // divided by 10000
 
     event GLMRDepositorUpdated(address glmrDepositor);
     event GLMRDelegatorUpdated(address glmrDelegator);
     event MGLMRUpdated(address mGLMR);
     event SGLMRUpdated(address sGLMR);
+    event TreasuryUpdated(address treasury);
+    event TreasuryFeeUpdated(uint256 fee);
 
-    constructor(address _glmrDelegator, address _glmrDepositor, address _mGLMR, address _sGLMR) {
+    constructor(address _glmrDelegator, address _glmrDepositor, address _mGLMR, address _sGLMR, address _treasury, uint256 _feePercentage) {
         require(_glmrDelegator != address(0), "GLMRRewardCollector.constructor: glmrDelegator cannot be zero address");
         require(_glmrDepositor != address(0), "GLMRRewardCollector.constructor: glmrDepositor cannot be zero address");
         require(_mGLMR != address(0), "GLMRRewardCollector.constructor: mGLMR cannot be zero address");
         require(_sGLMR != address(0), "GLMRRewardCollector.constructor: sGLMR cannot be zero address");
+        require(_treasury != address(0), "GLMRRewardCollector.constructor: treasury cannot be zero address");
 
         glmrDelegator = _glmrDelegator;
         glmrDepositor = _glmrDepositor;
         mGLMR = _mGLMR;
         sGLMR = _sGLMR;
+        treasury = _treasury;
+        feePercantage = _feePercentage;
 
         _setupRole(ADMIN_ROLE, msg.sender);
 
@@ -40,12 +49,19 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
         emit GLMRDepositorUpdated(_glmrDepositor);
         emit MGLMRUpdated(_mGLMR);
         emit SGLMRUpdated(_sGLMR);
+        emit TreasuryUpdated(_treasury);
+        emit TreasuryFeeUpdated(_feePercentage);
     }
 
     receive() external payable {}
 
     modifier onlyAdmin() {
         require(hasRole(ADMIN_ROLE, msg.sender), "GLMRRewardCollector.onlyAdmin: permission denied");
+        _;
+    }
+
+    modifier onlyRewardDistributor() {
+        require(hasRole(REWARD_DISTRIBUTOR_ROLE, msg.sender), "GLMRRewardCollector.onlyRewardDistributor: permission denied");
         _;
     }
 
@@ -77,7 +93,18 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
         emit SGLMRUpdated(_newSGLMR);
     }
 
-    function distributeReward() external onlyAdmin {
+    function updateTreasury(address _newTreasury) external onlyAdmin {
+        require(_newTreasury != address(0), "GLMRRewardCollector.updateTreasury:treasury cannot be zero address");
+        treasury = _newTreasury;
+        emit TreasuryUpdated(_newTreasury);
+    }
+
+    function updateTreasuryFee(uint256 _newFeePercentage) external onlyAdmin {
+        feePercantage = _newFeePercentage;
+        emit TreasuryFeeUpdated(_newFeePercentage);
+    }
+
+    function distributeReward() external onlyRewardDistributor {
         IGLMRDelegator(glmrDelegator).harvest(address(this));
         if (balances() == 0) {
             return;
@@ -88,7 +115,13 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
             return;
         }
         // distribute rewards to sGLMR
-        IMGLMR(mGLMR).transfer(sGLMR,mGLMRBalance);
-        
+        uint256 feeToCollect = mGLMRBalance * feePercantage / 10000;
+
+        if (feeToCollect > 0) {
+           mGLMRBalance -= feeToCollect;
+           IMGLMR(mGLMR).transfer(treasury, feeToCollect); 
+        }
+
+        IMGLMR(mGLMR).transfer(sGLMR, mGLMRBalance);        
     }
 }

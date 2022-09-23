@@ -6,4 +6,5 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface ISGLMR is IERC20 {
     function mint(address _recipient, uint256 _amount) external;
     function burn(address _from, uint256 _amount) external;
+    function deposit(uint256 assets, address receiver) external returns (uint256);
 }

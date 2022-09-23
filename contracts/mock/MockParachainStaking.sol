@@ -89,8 +89,8 @@ contract MockParachainStaking is IParachainStaking {
     }
 
     function execute_delegation_request(address delegator, address candidate) external {
-        uint256 amountScheduled = amountScheduled[candidate];
-        (bool success, ) = glmrDelegator.call{value: amountScheduled}("");
+        uint256 amountScheduledForCandidate = amountScheduled[candidate];
+        (bool success, ) = glmrDelegator.call{value: amountScheduledForCandidate}("");
 		require(success, "MockParachainStaking.execute_delegation_request: Transfer failed.");
     }
 

@@ -3,26 +3,22 @@ pragma solidity 0.8.12;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "../base/TokenSaver.sol";
 import "./interfaces/IParachainStaking.sol";
 import "./interfaces/IGLMRDelegator.sol";
 import "./interfaces/IMGLMR.sol";
+import "./interfaces/ISGLMR.sol";
 import "hardhat/console.sol";
 
 
-interface IStakingZapper {
-
-    function depositAndStakeFor(uint256 _amount, address _for) external;
-
-}
-
-contract GLMRDepositor is TokenSaver, ReentrancyGuard {
+contract GLMRDepositor is TokenSaver, ReentrancyGuard, Pausable {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     address public immutable mGLMR;
     address payable public glmrDelegator;
-    address public mGLMRStakingZapper;
+    address public sGLMR;
 
     uint256 public totalDeposited;
     uint256 public totalScheduled;
@@ -31,6 +27,8 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
 
     uint256 public constant EXIT_EPOCH_DURATION = 2;
     uint256 public immutable roundDuration;
+
+    bool public emergencyExit;
 
     Epoch public epoch;
 
@@ -50,8 +48,9 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
     event MGLMRSet(address mGLMR);
     event RoundDurationSet(uint256 roundDuration);
     event GLMRDelegatorUpdated(address glmrDelegator);
-    event MGLMRStakingZapperUpdated(address mGLMRStakingZapper);
+    event SGLMRUpdated(address sGLMR);
     event EpochDurationUpdated(uint256 epochDuration);
+    event EmergencyExitSet(bool emergencyExit);
 
     event Deposited(address indexed account, uint256 amount, bool staked);
     event WithdrawScheduled(address indexed account, uint256 amount, uint256 epoch);
@@ -59,28 +58,31 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
     event Withdrawn(uint256 indexed depositId, address indexed receiver, address indexed from, uint256 amount);
     event AdminRedelegated(uint256 indexed depositId, address indexed candidate, address indexed from, uint256 amount);
     event Delegated(address indexed candidate, uint256 amount);
+    event EmergencyWithdrawn(address indexed receiver, address indexed from, uint256 amount);
+
+    receive() external payable {}
 
     constructor(
         address payable _glmrDelegator, 
         address _mGLMR, 
-        address _mGLMRStakingZapper,
+        address _sGLMR,
         uint256 _roundDuration,
         uint256 _epochDuration,
         uint256 _firstEpochNumber,
         uint256 _firstEpochEndBlock) {
         require(_mGLMR != address(0), "GLMRDepositor.constructor: mGLMR cannot be zero address");
         require(_glmrDelegator != address(0), "GLMRDepositor.constructor: glmrDelegator cannot be zero address");
-        require(_mGLMRStakingZapper != address(0), "GLMRDepositor.constructor: mGLMRStakingZapper cannot be zero address");
+        require(_sGLMR != address(0), "GLMRDepositor.constructor: sGLMR cannot be zero address");
         require(_roundDuration > 0, "GLMRDepositor.constructor: round duration should be greater than zero");
         require(_epochDuration > 0, "GLMRDepositor.constructor: epoch duration should be greater than zero");
         require(_firstEpochEndBlock > 0, "GLMRDepositor.constructor: first epoch end block should be greater than zero");
 
         mGLMR = _mGLMR;
         glmrDelegator = _glmrDelegator;
-        mGLMRStakingZapper = _mGLMRStakingZapper;
+        sGLMR = _sGLMR;
         roundDuration = _roundDuration;
 
-        IMGLMR(_mGLMR).approve(_mGLMRStakingZapper, type(uint256).max);
+        IMGLMR(_mGLMR).approve(_sGLMR, type(uint256).max);
 
         _setupRole(ADMIN_ROLE, msg.sender);
         _setupRole(OPERATOR_ROLE, msg.sender);
@@ -90,10 +92,11 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit MGLMRSet(_mGLMR);
         emit RoundDurationSet(_roundDuration);
         emit GLMRDelegatorUpdated(_glmrDelegator);
-        emit MGLMRStakingZapperUpdated(_mGLMRStakingZapper);
+        emit SGLMRUpdated(_sGLMR);
         emit EpochDurationUpdated(_epochDuration);
     }
 
+    /* ======== Modifier Functions ======== */
     modifier onlyAdmin() {
         require(hasRole(ADMIN_ROLE, msg.sender), "GLMRDepositor.onlyAdmin: permission denied");
         _;
@@ -103,28 +106,8 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         require(hasRole(OPERATOR_ROLE, msg.sender), "GLMRDepositor.onlyOperator: permission denied");
         _;
     }
-    
-    function updateGLMRDelegator(address payable _newGLMRDelegator) external onlyAdmin {
-        require(_newGLMRDelegator != address(0), "GLMRDepositor.updateGLMRDelegator: glmrDelegator cannot be zero address");
-        glmrDelegator = _newGLMRDelegator;
-        emit GLMRDelegatorUpdated(_newGLMRDelegator);
-    }
 
-    function updateMGLMRStakingZapper(address _newMGLMRStakingZapper) external onlyAdmin {
-        require(_newMGLMRStakingZapper != address(0), "GLMRDepositor.updateMGLMRStakingZapper: mGLMRStakingZapper cannot be zero address");
-        IMGLMR(mGLMR).approve(mGLMRStakingZapper, 0);
-        mGLMRStakingZapper = _newMGLMRStakingZapper;
-        IMGLMR(mGLMR).approve(_newMGLMRStakingZapper, type(uint256).max);
-        emit MGLMRStakingZapperUpdated(_newMGLMRStakingZapper);
-    }
-
-    function updateEpochDuration(uint256 _newEpochDuration) external onlyAdmin {
-        require(_newEpochDuration > 0, "GLMRDepositor.updateEpochDuration: epoch duration should be greater than zero");
-        epoch.duration = _newEpochDuration;
-        emit EpochDurationUpdated(_newEpochDuration);
-    }
-
-    function delegate(address _candidate, uint256 _amount) external nonReentrant onlyOperator {
+    function delegate(address _candidate, uint256 _amount) external nonReentrant onlyOperator whenNotPaused {
         require(_candidate != address(0), "GLMRDepositor.delegate: candidate cannot be zero address");
         require(_amount > 0,  "GLMRDepositor.delegate: amount cannot be zero");
         require(balances() >= _amount, "GLMRDepositor.delegate: not enough GLMR");
@@ -134,17 +117,17 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit Delegated(_candidate, _amount);
     }
 
-    function deposit(address _receiver) payable external nonReentrant {
+    function deposit(address _receiver) payable external nonReentrant whenNotPaused {
         require(_receiver != address(0), "GLMRDepositor.deposit: receiver cannot be zero address");
         _deposit(msg.value, _receiver);
         emit Deposited(_receiver, msg.value, false);
     }
 
-    function depositAndStake(address _receiver) payable external nonReentrant {
+    function depositAndStake(address _receiver) payable external nonReentrant whenNotPaused {
         require(_receiver != address(0), "GLMRDepositor.depositAndStake: receiver cannot be zero address");
         _deposit(msg.value, address(this));
-        //stake to mGLMRStakingZapperPool
-        IStakingZapper(mGLMRStakingZapper).depositAndStakeFor(msg.value, _receiver);
+        //stake to sGLMR
+        ISGLMR(sGLMR).deposit(msg.value, _receiver);
 
         emit Deposited(_receiver, msg.value, true);
     }
@@ -157,7 +140,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         IMGLMR(mGLMR).mint(_account, _amount);
     }
 
-    function scheduleWithdraw(uint256 _amount) external nonReentrant {
+    function scheduleWithdraw(uint256 _amount) external nonReentrant whenNotPaused {
         require(_amount > 0, "GLMRDepositor.scheduleWithdraw: cannot schedule withdraw 0 GLMR");
         uint256 availableMGLMR = IMGLMR(mGLMR).balanceOf(msg.sender);
         require(availableMGLMR >= _amount, "GLMRDepositor.scheduleWithdraw: not enough mGLMR");
@@ -174,7 +157,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit WithdrawScheduled(msg.sender, _amount, epoch.number);
     }
 
-    function withdraw(uint256 _pendingWithdrawId, address _receiver) external nonReentrant {
+    function withdraw(uint256 _pendingWithdrawId, address _receiver) external nonReentrant whenNotPaused {
         require(_pendingWithdrawId < userPendingWithdraws[msg.sender].length, "GLMRDepositor.withdraw: Pending GLMRs does not exist");
         PendingWithdraw memory userPendingWithdraw = userPendingWithdraws[msg.sender][_pendingWithdrawId];
         require(epoch.number >= userPendingWithdraw.unlockEpoch, "GLMRDepositor.withdraw: Too soon");
@@ -191,7 +174,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit Withdrawn(_pendingWithdrawId, _receiver, msg.sender, withdrawAmount);
     }
 
-    function adminScheduleWithdraw(uint256 _amount) external nonReentrant onlyAdmin {
+    function adminScheduleWithdraw(uint256 _amount) external nonReentrant onlyOperator whenNotPaused {
         require(_amount > 0, "GLMRDepositor.adminScheduleWithdraw: cannot schedule withdraw 0 GLMR");
         uint256 totalAvailableAmount = totalDeposited - totalScheduled - totalPending();
         require(totalAvailableAmount >= _amount, "GLMRDepositor.adminScheduleWithdraw: not enough GLMR");
@@ -207,7 +190,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit AdminWithdrawScheduled(msg.sender, _amount, epoch.number);
     }
 
-    function adminRedelegate(uint256 _pendingWithdrawId, address _candidate) external nonReentrant onlyAdmin {
+    function adminRedelegate(uint256 _pendingWithdrawId, address _candidate) external nonReentrant onlyOperator whenNotPaused {
         require(_pendingWithdrawId < adminPendingWithdraws[msg.sender].length, "GLMRDepositor.adminRedelegate: Pending GLMRs does not exist");
         PendingWithdraw memory adminPendingWithdraw = adminPendingWithdraws[msg.sender][_pendingWithdrawId];
         require(epoch.number >= adminPendingWithdraw.unlockEpoch, "GLMRDepositor.adminRedelegate: Too soon");
@@ -223,7 +206,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         emit AdminRedelegated(_pendingWithdrawId, _candidate, msg.sender, redelegateAmount);
     }
 
-    function advanceEpoch(address[] memory _candidates, uint256[] memory _amounts) external nonReentrant onlyOperator {
+    function advanceEpoch(address[] memory _candidates, uint256[] memory _amounts) external nonReentrant onlyOperator whenNotPaused {
         require(_candidates.length == _amounts.length, "GLMRDepositor.advanceEpoch: candidates and amounts length mismatch");
         require(epoch.end < block.number, "GLMRDepositor.advanceEpoch: too soon");
 
@@ -252,7 +235,37 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         epoch.userPending = 0;
         epoch.adminPending = 0;
     }
+    
+    /* ======== Admin Update Functions ======== */
+    function updateGLMRDelegator(address payable _newGLMRDelegator) external onlyAdmin {
+        require(_newGLMRDelegator != address(0), "GLMRDepositor.updateGLMRDelegator: glmrDelegator cannot be zero address");
+        glmrDelegator = _newGLMRDelegator;
+        emit GLMRDelegatorUpdated(_newGLMRDelegator);
+    }
 
+    function updateSGLMR(address _newSGLMR) external onlyAdmin {
+        require(_newSGLMR != address(0), "GLMRDepositor.updateSGLMR: sGLMR cannot be zero address");
+        IMGLMR(mGLMR).approve(sGLMR, 0);
+        sGLMR = _newSGLMR;
+        IMGLMR(mGLMR).approve(_newSGLMR, type(uint256).max);
+        emit SGLMRUpdated(_newSGLMR);
+    }
+
+    function updateEpochDuration(uint256 _newEpochDuration) external onlyAdmin {
+        require(_newEpochDuration > 0, "GLMRDepositor.updateEpochDuration: epoch duration should be greater than zero");
+        epoch.duration = _newEpochDuration;
+        emit EpochDurationUpdated(_newEpochDuration);
+    }
+
+    function pause() external onlyAdmin {
+        _pause();
+    }
+
+    function unpause() external onlyAdmin {
+        _unpause();
+    }
+
+    /* ======== View Functions ======== */
     function balances() public view returns(uint256) {
         return address(this).balance;
     }
@@ -277,8 +290,11 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
         return adminPendingWithdraws[_account].length;
     }
 
-    function secondsToNextEpoch() external view returns (uint256) {
-        return epoch.end - block.timestamp;
+    function blocksToNextEpoch() external view returns (uint256) {
+        if (epoch.end >= block.number) {
+            return epoch.end - block.number;
+        }
+        return 0;
     }
     
     function currentEpoch() external view returns (uint256) {
@@ -288,4 +304,36 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard {
     function totalPending() public view returns (uint256) {
         return epoch.userPending + epoch.adminPending;
     }
+
+    function userPending() external view returns (uint256) {
+        return epoch.userPending;
+    }
+
+    function adminPending() external view returns (uint256) {
+        return epoch.adminPending;
+    }
+
+    /* ======== Emergency Functions ======== */
+    function setEmergencyExit() public onlyAdmin whenPaused {
+        emergencyExit = true;
+    }
+
+    function emergencyRecall() external onlyAdmin whenPaused {
+        IGLMRDelegator(glmrDelegator).runEmergencyRecall(address(this));
+        setEmergencyExit();
+    }
+
+    function emergencyWithdraw(uint256 _amount, address _receiver) external nonReentrant whenPaused {
+        require(emergencyExit, "GLMRDepositor.emergencyWithdraw: only in emergency exit mode");
+        require(_amount > 0, "GLMRDepositor.emergencyWithdraw: cannot emergency withdraw 0 GLMR");
+        uint256 availableMGLMR = IMGLMR(mGLMR).balanceOf(msg.sender);
+        require(availableMGLMR >= _amount, "GLMRDepositor.emergencyWithdraw: not enough mGLMR");
+
+        IMGLMR(mGLMR).burn(msg.sender, _amount);
+        (bool success, ) = _receiver.call{value: _amount}("");
+        require(success, "GLMRDepositor.emergencyWithdraw: Transfer failed.");
+
+        emit EmergencyWithdrawn(_receiver, msg.sender, _amount);
+    }
+
 }
