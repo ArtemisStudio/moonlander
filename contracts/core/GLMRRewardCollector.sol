@@ -17,29 +17,39 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
     address public mGLMR;
     address public sGLMR;
     address public treasury;
-
-    uint256 public feePercantage; // divided by 10000
+    
+    uint256 public harvestIncentive; //incentive to distributor
+    uint256 public treasuryFee; //possible fee to build treasury
+    uint256 public constant FEE_DENOMINATOR = 10000;
 
     event GLMRDepositorUpdated(address glmrDepositor);
     event GLMRDelegatorUpdated(address glmrDelegator);
     event MGLMRUpdated(address mGLMR);
     event SGLMRUpdated(address sGLMR);
     event TreasuryUpdated(address treasury);
-    event TreasuryFeeUpdated(uint256 fee);
+    event TreasuryFeeUpdated(uint256 treasuryFee);
+    event HarvestIncentiveUpdated(uint256 harvestIncentive);
 
-    constructor(address _glmrDelegator, address _glmrDepositor, address _mGLMR, address _sGLMR, address _treasury, uint256 _feePercentage) {
+    event RewardsDistributed(address indexed to, uint256 amount);
+    event TreasuryFeeIssued(address indexed to, uint256 treasuryFeeAmount);
+    event HarvestIncentiveIssued(address indexed to, uint256 harvestIncentiveAmount);
+
+    constructor(address _glmrDelegator, address _glmrDepositor, address _mGLMR, address _sGLMR, address _treasury, uint256 _treasuryFee, uint256 _harvestIncentive) {
         require(_glmrDelegator != address(0), "GLMRRewardCollector.constructor: glmrDelegator cannot be zero address");
         require(_glmrDepositor != address(0), "GLMRRewardCollector.constructor: glmrDepositor cannot be zero address");
         require(_mGLMR != address(0), "GLMRRewardCollector.constructor: mGLMR cannot be zero address");
         require(_sGLMR != address(0), "GLMRRewardCollector.constructor: sGLMR cannot be zero address");
         require(_treasury != address(0), "GLMRRewardCollector.constructor: treasury cannot be zero address");
+        require(_treasuryFee <= FEE_DENOMINATOR, "GLMRRewardCollector.constructor: treasuryFee cannot be greater than 100%");
+        require(_harvestIncentive <= FEE_DENOMINATOR, "GLMRRewardCollector.constructor: harvestIncentive cannot be greater than 100%");
 
         glmrDelegator = _glmrDelegator;
         glmrDepositor = _glmrDepositor;
         mGLMR = _mGLMR;
         sGLMR = _sGLMR;
         treasury = _treasury;
-        feePercantage = _feePercentage;
+        treasuryFee = _treasuryFee;
+        harvestIncentive = _harvestIncentive;
 
         _setupRole(ADMIN_ROLE, msg.sender);
 
@@ -50,7 +60,8 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
         emit MGLMRUpdated(_mGLMR);
         emit SGLMRUpdated(_sGLMR);
         emit TreasuryUpdated(_treasury);
-        emit TreasuryFeeUpdated(_feePercentage);
+        emit TreasuryFeeUpdated(_treasuryFee);
+        emit HarvestIncentiveUpdated(_harvestIncentive);
     }
 
     receive() external payable {}
@@ -99,9 +110,15 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
         emit TreasuryUpdated(_newTreasury);
     }
 
-    function updateTreasuryFee(uint256 _newFeePercentage) external onlyAdmin {
-        feePercantage = _newFeePercentage;
-        emit TreasuryFeeUpdated(_newFeePercentage);
+    function updateTreasuryFee(uint256 _newTreasuryFee) external onlyAdmin {
+        require(_newTreasuryFee <= FEE_DENOMINATOR, "GLMRRewardCollector.updateTreasuryFee: treasuryFee cannot be greater than 100%");
+        treasuryFee = _newTreasuryFee;
+        emit TreasuryFeeUpdated(_newTreasuryFee);
+    }
+
+    function updateHarvestIncentive(uint256 _newHarvestIncentive) external onlyAdmin {
+        harvestIncentive = _newHarvestIncentive;
+        emit HarvestIncentiveUpdated(_newHarvestIncentive);
     }
 
     function distributeReward() external onlyRewardDistributor {
@@ -114,14 +131,24 @@ contract GLMRRewardCollector is TokenSaver, ReentrancyGuard {
         if (mGLMRBalance == 0) {
             return;
         }
-        // distribute rewards to sGLMR
-        uint256 feeToCollect = mGLMRBalance * feePercantage / 10000;
+        
+        uint256 treasuryFeeAmount = mGLMRBalance * treasuryFee / FEE_DENOMINATOR;
+        uint256 harvestIncentiveAmount = mGLMRBalance * harvestIncentive / FEE_DENOMINATOR;
 
-        if (feeToCollect > 0) {
-           mGLMRBalance -= feeToCollect;
-           IMGLMR(mGLMR).transfer(treasury, feeToCollect); 
+        if (treasury != address(0) && treasury != address(this) && treasuryFeeAmount > 0) {
+           mGLMRBalance -= treasuryFeeAmount;
+           IMGLMR(mGLMR).transfer(treasury, treasuryFeeAmount);
+           emit TreasuryFeeIssued(treasury, treasuryFeeAmount);
         }
 
-        IMGLMR(mGLMR).transfer(sGLMR, mGLMRBalance);        
+        if (harvestIncentiveAmount > 0) {
+            mGLMRBalance -= harvestIncentiveAmount;
+            IMGLMR(mGLMR).transfer(msg.sender, harvestIncentiveAmount); 
+            emit HarvestIncentiveIssued(msg.sender, harvestIncentiveAmount);
+        }
+
+        // distribute rewards to sGLMR
+        IMGLMR(mGLMR).transfer(sGLMR, mGLMRBalance);     
+        emit RewardsDistributed(sGLMR, mGLMRBalance);
     }
 }

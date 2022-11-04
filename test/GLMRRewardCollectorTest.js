@@ -25,7 +25,8 @@ describe("GLMRRewardCollector", function () {
   const FIRST_EPOCH_NUMBER = 1;
   const EPOCH_DURATION = 28;
   const ROUND_DURATION = 1800;
-  const FEE_PERCENTAGE = 50;
+  const TREASURY_FEE = 100;
+  const HARVEST_INCENTIVE = 50;
 
   const NEW_FEE = 100;
 
@@ -46,7 +47,7 @@ describe("GLMRRewardCollector", function () {
     glmrDelegator = await MockGLMRDelegatorFactory.connect(owner).deploy(parachainStaking.address);
     firstEpochEndBlock = EPOCH_DURATION*ROUND_DURATION
     glmrDepositor = await GLMRDepositorFactory.connect(owner).deploy(glmrDelegator.address, mGLMR.address, sGLMR.address, ROUND_DURATION, EPOCH_DURATION, FIRST_EPOCH_NUMBER, firstEpochEndBlock);
-    glmrRewardCollector = await GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, sGLMR.address, treasury.address, FEE_PERCENTAGE);
+    glmrRewardCollector = await GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, sGLMR.address, treasury.address, TREASURY_FEE, HARVEST_INCENTIVE);
     await parachainStaking.connect(owner).setGLMRDelegator(glmrDelegator.address);
     await mGLMR.connect(owner).grantRole(await mGLMR.MINTER_ROLE(), glmrDepositor.address);
     await glmrDelegator.connect(owner).grantRole(await glmrDelegator.DEPOSITOR_ROLE(), glmrDepositor.address);
@@ -63,31 +64,31 @@ describe("GLMRRewardCollector", function () {
 
   describe("Constructor", function() {
     it("Cannot deploy with zero glmrDelegator address", async function () {
-      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(ZERO_ADDRESS, glmrDepositor.address, mGLMR.address, sGLMR.address, treasury.address, FEE_PERCENTAGE)).to.be.revertedWith(
+      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(ZERO_ADDRESS, glmrDepositor.address, mGLMR.address, sGLMR.address, treasury.address, TREASURY_FEE, HARVEST_INCENTIVE)).to.be.revertedWith(
         "GLMRRewardCollector.constructor: glmrDelegator cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero glmrDepositor address", async function () {
-      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, ZERO_ADDRESS, mGLMR.address, sGLMR.address, treasury.address, FEE_PERCENTAGE)).to.be.revertedWith(
+      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, ZERO_ADDRESS, mGLMR.address, sGLMR.address, treasury.address, TREASURY_FEE, HARVEST_INCENTIVE)).to.be.revertedWith(
         "GLMRRewardCollector.constructor: glmrDepositor cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero mGLMR address", async function () {
-      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, ZERO_ADDRESS, sGLMR.address, treasury.address, FEE_PERCENTAGE)).to.be.revertedWith(
+      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, ZERO_ADDRESS, sGLMR.address, treasury.address, TREASURY_FEE, HARVEST_INCENTIVE)).to.be.revertedWith(
         "GLMRRewardCollector.constructor: mGLMR cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero sGLMR address", async function () {
-      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, ZERO_ADDRESS, treasury.address, FEE_PERCENTAGE)).to.be.revertedWith(
+      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, ZERO_ADDRESS, treasury.address, TREASURY_FEE, HARVEST_INCENTIVE)).to.be.revertedWith(
         "GLMRRewardCollector.constructor: sGLMR cannot be zero address"
         );
     });
 
     it("Cannot deploy with zero treasury address", async function () {
-      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, sGLMR.address, ZERO_ADDRESS, FEE_PERCENTAGE)).to.be.revertedWith(
+      await expect(GLMRRewardCollectorFactory.connect(owner).deploy(glmrDelegator.address, glmrDepositor.address, mGLMR.address, sGLMR.address, ZERO_ADDRESS, TREASURY_FEE, HARVEST_INCENTIVE)).to.be.revertedWith(
         "GLMRRewardCollector.constructor: treasury cannot be zero address"
         );
     });
@@ -179,9 +180,9 @@ describe("GLMRRewardCollector", function () {
     })
 
     it("Can successfully update treasury fee", async function () {
-      expect(await glmrRewardCollector.feePercantage()).to.be.equal(FEE_PERCENTAGE);
+      expect(await glmrRewardCollector.treasuryFee()).to.be.equal(TREASURY_FEE);
       await glmrRewardCollector.connect(owner).updateTreasuryFee(NEW_FEE);
-      expect(await glmrRewardCollector.feePercantage()).to.be.equal(NEW_FEE);
+      expect(await glmrRewardCollector.treasuryFee()).to.be.equal(NEW_FEE);
     })
 
     it("Can emit correct event", async function() {
@@ -212,21 +213,23 @@ describe("GLMRRewardCollector", function () {
         });
   
         let beforeBal = await mGLMR.connect(owner).balanceOf(sGLMR.address);
+        let beforePlayer1Bal = await mGLMR.connect(owner).balanceOf(player1.address);
         let beforeTreasuryBal = await mGLMR.connect(owner).balanceOf(treasury.address);
-  
-  
         await glmrRewardCollector.connect(player1).distributeReward();
         let afterBal = await mGLMR.connect(owner).balanceOf(sGLMR.address);
+        let afterPlayer1Bal = await mGLMR.connect(owner).balanceOf(player1.address);
         let afterBalTreasury = await mGLMR.connect(owner).balanceOf(treasury.address);
   
   
-        expect(afterBal.sub(beforeBal)).to.be.equal(995);
+        expect(afterBal.sub(beforeBal)).to.be.equal(985);
+        expect(afterPlayer1Bal.sub(beforePlayer1Bal)).to.be.equal(5);
+
         expect(await glmrDepositor.connect(owner).totalDeposited()).to.be.equal(1000);
   
-        expect(afterBalTreasury.sub(beforeTreasuryBal)).to.be.equal(5);
+        expect(afterBalTreasury.sub(beforeTreasuryBal)).to.be.equal(10);
       })
   
-      it("can successfully distributeReward after change fee percentage", async function() {
+      it("can successfully distributeReward after change treasury fee", async function() {
         let earnings = "1000";
         await owner.sendTransaction({
           to: glmrRewardCollector.address,
@@ -235,18 +238,21 @@ describe("GLMRRewardCollector", function () {
   
         let beforeBal = await mGLMR.connect(owner).balanceOf(sGLMR.address);
         let beforeTreasuryBal = await mGLMR.connect(owner).balanceOf(treasury.address);
-  
+        let beforePlayer1Bal = await mGLMR.connect(owner).balanceOf(player1.address);
+
         await glmrRewardCollector.connect(player1).distributeReward();
         let afterBal = await mGLMR.connect(owner).balanceOf(sGLMR.address);
         let afterBalTreasury = await mGLMR.connect(owner).balanceOf(treasury.address);
+        let afterPlayer1Bal = await mGLMR.connect(owner).balanceOf(player1.address);
+
   
-  
-        expect(afterBal.sub(beforeBal)).to.be.equal(995);
+        expect(afterBal.sub(beforeBal)).to.be.equal(985);
+        expect(afterPlayer1Bal.sub(beforePlayer1Bal)).to.be.equal(5);
+        expect(afterBalTreasury.sub(beforeTreasuryBal)).to.be.equal(10);
+
         expect(await glmrDepositor.connect(owner).totalDeposited()).to.be.equal(1000);
-  
-        expect(afterBalTreasury.sub(beforeTreasuryBal)).to.be.equal(5);
-  
-        await glmrRewardCollector.connect(owner).updateTreasuryFee(100);
+    
+        await glmrRewardCollector.connect(owner).updateTreasuryFee(200);
   
         let earnings2 = "1000";
         await owner.sendTransaction({
@@ -256,17 +262,20 @@ describe("GLMRRewardCollector", function () {
   
         let beforeBal2 = await mGLMR.connect(owner).balanceOf(sGLMR.address);
         let beforeTreasuryBal2 = await mGLMR.connect(owner).balanceOf(treasury.address);
-  
+        let beforePlayer1Bal2 = await mGLMR.connect(owner).balanceOf(player1.address);
+
   
         await glmrRewardCollector.connect(player1).distributeReward();
         let afterBal2 = await mGLMR.connect(owner).balanceOf(sGLMR.address);
         let afterBalTreasury2 = await mGLMR.connect(owner).balanceOf(treasury.address);
+        let afterPlayer1Bal2 = await mGLMR.connect(owner).balanceOf(player1.address);
+
   
-  
-        expect(afterBal2.sub(beforeBal2)).to.be.equal(990);
+        expect(afterBal2.sub(beforeBal2)).to.be.equal(975);
+        expect(afterPlayer1Bal2.sub(beforePlayer1Bal2)).to.be.equal(5);
+        expect(afterBalTreasury2.sub(beforeTreasuryBal2)).to.be.equal(20);
+
         expect(await glmrDepositor.connect(owner).totalDeposited()).to.be.equal(2000);
-  
-        expect(afterBalTreasury2.sub(beforeTreasuryBal2)).to.be.equal(10);
       })
     })
   })

@@ -29,5 +29,6 @@ contract TokenSaver is AccessControlEnumerable {
     function saveNativeToken(address _receiver, uint256 _amount) external onlyTokenSaver {
         (bool success, ) = _receiver.call{value: _amount}("");
 		require(success, "TokenSaver.saveNativeToken: Transfer failed.");
+        emit TokenSaved(_msgSender(), _receiver, address(0), _amount);
     }
 }

@@ -97,11 +97,6 @@ describe("GLMRDelegator", function () {
     })
 
     context("increaseDelegation", function() {
-      it("cannot increase delegation for candidates that are not in the list", async function() {       
-        await expect(glmrDelegator.increaseDelegation(candidate1.address, "1000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator._increaseDelegation: candidate not in the list"
-          );
-      })
 
       it("can successfully increase candiate delegations", async function() {
         await glmrDelegator.addCandidate(candidate1.address, "1000000000000000000");
@@ -138,11 +133,6 @@ describe("GLMRDelegator", function () {
     })
 
     context("reduceDelegation", function() {
-      it("cannot reduce delegation for candidates that are not in the list", async function() {       
-        await expect(glmrDelegator.reduceDelegation(candidate1.address, "1000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator._reduceDelegation: candidate not in the list"
-          );
-      })
 
       it("can successfully reduce candiate delegations", async function() {
         await glmrDelegator.addCandidate(candidate1.address, "1000000000000000000");
@@ -179,11 +169,6 @@ describe("GLMRDelegator", function () {
     })
 
     context("updateDelegation", function() {
-      it("cannot update delegation for candidates that are not in the list", async function() {       
-        await expect(glmrDelegator.updateDelegation(candidate1.address, "1000000000000000000")).to.be.revertedWith(
-          "GLMRDelegator._updateDelegation: candidate not in the list"
-          );
-      })
 
       it("can successfully update candiate delegations", async function() {
         await glmrDelegator.addCandidate(candidate1.address, "1000000000000000000");

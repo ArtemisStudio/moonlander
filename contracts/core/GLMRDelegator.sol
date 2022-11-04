@@ -238,20 +238,17 @@ contract GLMRDelegator is TokenSaver, Pausable {
     }
 
     function _increaseDelegation(address candidate, uint256 delegation) internal {
-        require(candidateExist(candidate), "GLMRDelegator._increaseDelegation: candidate not in the list");
         _updateDelegation(candidate, delegations[candidate] + delegation);
         emit DelegationIncreased(candidate, delegation);
     }
 
     function _reduceDelegation(address candidate, uint256 delegation) internal {
-        require(candidateExist(candidate), "GLMRDelegator._reduceDelegation: candidate not in the list");
         require(delegations[candidate] >= delegation, "GLMRDelegator._reduceDelegation: reduce to much");
         _updateDelegation(candidate, delegations[candidate] - delegation);
         emit DelegationReduced(candidate, delegation);
     }
 
     function _updateDelegation(address candidate, uint256 newDelegation) internal {
-        require(candidateExist(candidate), "GLMRDelegator._updateDelegation: candidate not in the list");
         address prevCandidate = _findPrevCandidate(candidate);
         address newCandidate = _nextCandidates[candidate];
         if(_verifyIndex(prevCandidate, newDelegation, newCandidate)){
@@ -290,7 +287,6 @@ contract GLMRDelegator is TokenSaver, Pausable {
     function _delegatorBondMore(address _candidate, uint256 _more) internal virtual {
         require(_candidate != address(0), "GLMRDelegator._delegatorBondMore: candidate cannot be zero address");
         require(_more > 0, "GLMRDelegator._delegatorBondMore: cannot bond more 0 amount");
-        require(candidateExist(_candidate), "GLMRDelegator._delegatorBondMore: candidate not in the delegation list");
         IParachainStaking(stakingDelegations).delegator_bond_more(_candidate, _more);
         emit DelegatorMoreBonded(_candidate, _more);
     }

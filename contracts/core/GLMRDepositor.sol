@@ -50,7 +50,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard, Pausable {
     event GLMRDelegatorUpdated(address glmrDelegator);
     event SGLMRUpdated(address sGLMR);
     event EpochDurationUpdated(uint256 epochDuration);
-    event EmergencyExitSet(bool emergencyExit);
+    event EmergencyExitSet();
 
     event Deposited(address indexed account, uint256 amount, bool staked);
     event WithdrawScheduled(address indexed account, uint256 amount, uint256 epoch);
@@ -316,6 +316,7 @@ contract GLMRDepositor is TokenSaver, ReentrancyGuard, Pausable {
     /* ======== Emergency Functions ======== */
     function setEmergencyExit() public onlyAdmin whenPaused {
         emergencyExit = true;
+        emit EmergencyExitSet();
     }
 
     function emergencyRecall() external onlyAdmin whenPaused {
